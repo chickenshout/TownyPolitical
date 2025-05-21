@@ -55,7 +55,7 @@ A political plugin for Towny servers , incorporates political systems, parties, 
     *   [Towny Advanced](https://github.com/TownyAdvanced/Towny) (已测试v0.100.4.0)。
     *   [Vault](https://www.spigotmc.org/resources/vault.34315/)。
     *   一个 Vault 支持的经济插件，例如 [TheNewEconomy](https://www.spigotmc.org/resources/the-new-economy.7859/) (或 EssentialsX Econ, CMI Econ 等)。
-2.  **下载**: 从 [Releases 页面](https://github.com/YourGitHubUsername/TownyPolitical/releases) 下载最新的 `TownyPolitical_xxx.jar` 文件。
+2.  **下载**: 从 [Releases 页面](https://github.com/chickenshout/TownyPolitical/releases) 下载最新的 `TownyPolitical_xxx.jar` 文件。
 3.  **安装**: 将下载的 JAR 文件放入服务器的 `plugins` 文件夹。
 4.  **启动服务器**: 首次启动会自动生成配置文件 (`config.yml`) 和消息文件 (`messages.yml`, 默认为中文)。
 5.  **配置**:
