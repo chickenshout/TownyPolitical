@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'top.chickenshout'
-version = '0.1-Alpha'
+version = '0.2-Alpha'
 
 repositories {
     mavenCentral()
