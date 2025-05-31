@@ -256,7 +256,7 @@ public class NationCommandsHandler {
 
         // 查找最近一次完成的议会选举
         // 这需要 ElectionManager 提供一个方法来获取特定国家特定类型的最新已完成选举
-        Optional<Election> latestParliamentElectionOpt = Optional.ofNullable(electionManager.getActiveElection(targetNation.getUUID(), ElectionType.PARLIAMENTARY));
+        Optional<Election> latestParliamentElectionOpt = electionManager.getLatestFinishedElection(targetNation.getUUID(), ElectionType.PARLIAMENTARY);
 
         if (!latestParliamentElectionOpt.isPresent()) {
             messageManager.sendMessage(sender, "nation-parliament-info-no-election-data", "nation_name", targetNation.getName());

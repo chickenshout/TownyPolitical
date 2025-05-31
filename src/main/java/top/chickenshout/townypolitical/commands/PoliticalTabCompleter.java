@@ -267,7 +267,7 @@ public class PoliticalTabCompleter implements TabCompleter {
                                 completions);
                     } else if (args.length == actualArgIndex + 2) { // Typing election type
                         StringUtil.copyPartialMatches(currentArg,
-                                Arrays.asList("parliament", "president", "parl", "pres"),
+                                Arrays.asList("PARLIAMENTARY", "PRESIDENTIAL", "PARTY_LEADER"),
                                 completions);
                     }
                     break;

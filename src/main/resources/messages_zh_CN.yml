@@ -264,6 +264,8 @@ election-vote-fail-not-citizen: "&c你不是国家 '&e%nation_name%&c' 的公民
 election-vote-fail-not-party-member: "&c你不是政党 '&e%party_name%&c' 的正式成员，无法参与该党内部投票。"
 election-vote-fail-invalid-candidate: "&c候选人 '%candidate_name%' 无效或不属于本次选举。"
 election-vote-success: "&a感谢你的投票！你已成功为候选人 &e%candidate_name% &a投下一票。"
+election-candidate-register-fail-nation-nonexistent: "&c目标国家不存在，无法报名参选。"
+election-vote-fail-nation-nonexistent: "&c目标国家不存在，无法投票。"
 # 选举结果
 election-results-none-found: "&c未能找到关于 '%context%' 的近期选举结果。"
 election-results-not-finished: "&c该选举尚未结束，目前无法查看最终结果 (当前状态: %status%)。"
@@ -279,14 +281,14 @@ election-results-party-leader-failed: "&c政党 '&e%party_name%&c' 的领袖选�
 election-results-parliament-seats-header: "&6--- [议会席位详细分配] ---"
 election-results-parliament-seat-entry: "&b%party_name%: &e%seats% 席"
 # 管理员命令
-election-admin-start-invalid-type: "&c无效的选举类型 '%type%'。可用: parliament, president, leader。"
+election-admin-start-invalid-type: "&c无效的选举类型 '%type%'。可用: PARLIAMENTARY, PRESIDENTIAL, PARTY_LEADER。"
 election-admin-start-success: "&a已成功为 '%context%' 手动启动 '%type%'。"
 election-admin-start-fail: "&c为 '%context%' 启动 '%type%' 失败 (可能已在进行、政体不支持或条件不足)。"
 election-admin-stop-none-active: "&c上下文 '%context%' 当前没有活跃的选举可以停止。"
 election-admin-stop-all-success: "&a已成功停止/取消 '%context%' 的所有活跃选举。"
 election-admin-stop-specific-none-active: "&c上下文 '%context%' 当前没有活跃的 '%type%' 可以停止。"
 election-admin-stop-specific-success: "&a已成功停止/取消在 '%context%' 的 '%type%'。"
-election-admin-stop-invalid-type-for-context-stop: "&c通过上下文停止选举时，提供的类型 '%type%' 无效。请使用 'parliament', 'president', 'leader' 或直接提供选举ID。"
+election-admin-stop-invalid-type-for-context-stop: "&c通过上下文停止选举时，提供的类型 '%type%' 无效。请使用 'PARLIAMENTARY', 'PRESIDENTIAL', 'PARTY_LEADER' 或直接提供选举ID。"
 election-admin-stop-by-id-success: "&a已成功停止/取消选举 (ID: %id%, 类型: %type%, 上下文: %context%)。"
 # 选举命令帮助
 command-election-unknown: "&c未知选举命令: %subcommand%。输入 &6/%label% help&c 查看帮助。"
@@ -298,3 +300,4 @@ help-election-vote: "&b  vote [类型] [上下文] <候选人> &7- 为候选人�
 help-election-results: "&b  results [类型] [上下文] &7- 查看选举结果。"
 help-election-admin-start: "&b  start <上下文> <类型> &7- (管理) 开始一场选举。"
 help-election-admin-stop: "&b  stop <ID 或 类型+上下文> [原因] &7- (管理) 停止/取消选举。"
+

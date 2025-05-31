@@ -3,6 +3,8 @@
 package top.chickenshout.townypolitical.commands.handlers;
 
 import com.palmergames.bukkit.towny.TownyAPI;
+import com.palmergames.bukkit.towny.exceptions.NotRegisteredException;
+import com.palmergames.bukkit.towny.exceptions.TownyException;
 import com.palmergames.bukkit.towny.object.Nation;
 import com.palmergames.bukkit.towny.object.Resident;
 import org.bukkit.Bukkit;
@@ -19,7 +21,7 @@ import top.chickenshout.townypolitical.managers.ElectionManager;
 import top.chickenshout.townypolitical.managers.PartyManager;
 import top.chickenshout.townypolitical.utils.MessageManager;
 
-import javax.annotation.Nullable;
+import javax.annotation.Nullable; // 如果你使用 @Nullable 注解
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -30,68 +32,85 @@ public class ElectionCommandsHandler {
     private final ElectionManager electionManager;
     private final PartyManager partyManager;
     private final SimpleDateFormat dateFormat;
+    private String currentSubCommand = null; // 用于辅助 parseElectionContext
 
     public ElectionCommandsHandler(TownyPolitical plugin) {
         this.plugin = plugin;
         this.messageManager = plugin.getMessageManager();
         this.electionManager = plugin.getElectionManager();
         this.partyManager = plugin.getPartyManager();
-        this.dateFormat = new SimpleDateFormat(plugin.getConfig().getString("elections.date_format", "yyyy-MM-dd HH:mm:ss z"));
-        this.dateFormat.setTimeZone(TimeZone.getTimeZone(plugin.getConfig().getString("elections.time_zone", TimeZone.getDefault().getID())));
+        // 从config中读取日期格式和时区
+        String configDateFormat = plugin.getConfig().getString("general.date_format", "yyyy-MM-dd HH:mm:ss z");
+        String configTimeZone = plugin.getConfig().getString("general.time_zone", TimeZone.getDefault().getID());
+        this.dateFormat = new SimpleDateFormat(configDateFormat);
+        try {
+            this.dateFormat.setTimeZone(TimeZone.getTimeZone(configTimeZone));
+        } catch (Exception e) {
+            plugin.getLogger().warning("Invalid time_zone in config: " + configTimeZone + ". Using server default.");
+            this.dateFormat.setTimeZone(TimeZone.getDefault());
+        }
     }
 
     public boolean handle(CommandSender sender, String commandLabel, String[] args) {
         if (args.length == 0) {
             sendElectionHelp(sender, commandLabel);
+            this.currentSubCommand = null;
             return true;
         }
         String subCommand = args[0].toLowerCase();
+        this.currentSubCommand = subCommand;
         String[] subArgs = Arrays.copyOfRange(args, 1, args.length);
 
+        boolean result;
         switch (subCommand) {
             case "info":
-                return handleInfoCommand(sender, commandLabel, subArgs);
+                result = handleInfoCommand(sender, commandLabel, subArgs);
+                break;
             case "candidates":
             case "listcandidates":
             case "lc":
-                return handleCandidatesCommand(sender, commandLabel, subArgs);
+                result = handleCandidatesCommand(sender, commandLabel, subArgs);
+                break;
             case "register":
             case "run":
-                return handleRegisterCommand(sender, commandLabel, subArgs);
+                result = handleRegisterCommand(sender, commandLabel, subArgs); // 将调用完整实现
+                break;
             case "vote":
-                return handleVoteCommand(sender, commandLabel, subArgs);
+                result = handleVoteCommand(sender, commandLabel, subArgs); // 将调用完整实现
+                break;
             case "results":
-                return handleResultsCommand(sender, commandLabel, subArgs);
-            case "start": // Admin command
-                return handleAdminStartCommand(sender, commandLabel, subArgs);
-            case "stop":  // Admin command (cancel or force end)
+                result = handleResultsCommand(sender, commandLabel, subArgs);
+                break;
+            case "start":
+                result = handleAdminStartCommand(sender, commandLabel, subArgs);
+                break;
+            case "stop":
             case "cancel":
-                return handleAdminStopCommand(sender, commandLabel, subArgs);
+                result = handleAdminStopCommand(sender, commandLabel, subArgs);
+                break;
             case "help":
             case "?":
                 sendElectionHelp(sender, commandLabel);
-                return true;
+                result = true;
+                break;
             default:
                 messageManager.sendMessage(sender, "command-election-unknown", "subcommand", subCommand);
                 sendElectionHelp(sender, commandLabel);
-                return true;
+                result = true;
+                break;
         }
+        this.currentSubCommand = null;
+        return result;
     }
 
-    /**
-     * 辅助方法，用于从参数中解析选举上下文（国家或政党）和可选的选举类型。
-     * @param sender 命令发送者
-     * @param args 从子命令之后开始的参数数组
-     * @param defaultType 如果未在参数中指定类型，则使用的默认选举类型（可为null）
-     * @return 一个包含 Election 和解析出的上下文名称的 Pair，或 null（如果解析失败）
-     */
     private ParsedElectionContext parseElectionContext(CommandSender sender, String[] args, @Nullable ElectionType defaultType) {
         UUID contextId = null;
         String contextName = "N/A";
         ElectionType determinedType = defaultType;
         int nextArgIndex = 0;
+        boolean isResultsCmd = "results".equalsIgnoreCase(this.currentSubCommand);
 
-        // 尝试解析第一个参数是否为选举类型
+
         if (args.length > nextArgIndex) {
             Optional<ElectionType> typeOpt = ElectionType.fromString(args[nextArgIndex].toUpperCase());
             if (typeOpt.isPresent()) {
@@ -100,76 +119,90 @@ public class ElectionCommandsHandler {
             }
         }
 
-        // 尝试解析上下文名称 (国家或政党)
         if (args.length > nextArgIndex) {
-            // 假设上下文名称是类型之后的单个词或所有剩余词
             String nameArg = String.join(" ", Arrays.copyOfRange(args, nextArgIndex, args.length));
             Nation nation = TownyAPI.getInstance().getNation(nameArg);
             if (nation != null) {
                 contextId = nation.getUUID();
                 contextName = nation.getName();
-                if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL; // 默认查国家的总统选举
+                if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL;
             } else {
                 Party party = partyManager.getParty(nameArg);
                 if (party != null) {
                     contextId = party.getPartyId();
                     contextName = party.getName();
-                    if (determinedType == null || determinedType != ElectionType.PARTY_LEADER) { // 如果指定类型不是PARTY_LEADER，则无效
+                    if (determinedType == null || determinedType != ElectionType.PARTY_LEADER) {
                         messageManager.sendMessage(sender, "election-context-party-requires-leader-type", "party_name", party.getName());
                         return null;
                     }
-                    determinedType = ElectionType.PARTY_LEADER; // 强制
+                    determinedType = ElectionType.PARTY_LEADER;
                 } else {
                     messageManager.sendMessage(sender, "error-context-not-found", "context", nameArg);
                     return null;
                 }
             }
-        } else if (sender instanceof Player) { // 没有提供上下文名称，尝试使用玩家的上下文
+        } else if (sender instanceof Player) {
             Player player = (Player) sender;
-            Nation playerNation = TownyAPI.getInstance().getResidentNationOrNull((Resident) player);
-            if (playerNation != null) {
-                contextId = playerNation.getUUID();
-                contextName = playerNation.getName();
-                if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL;
-            } else {
-                Party playerParty = partyManager.getPartyByMember(player.getUniqueId());
-                if (playerParty != null) {
-                    contextId = playerParty.getPartyId();
-                    contextName = playerParty.getName();
-                    if (determinedType == null || determinedType != ElectionType.PARTY_LEADER) {
-                        messageManager.sendMessage(sender, "election-context-party-requires-leader-type-self");
+            Resident resident = TownyAPI.getInstance().getResident(player.getUniqueId());
+            if (resident != null) {
+                if (determinedType == null || determinedType == ElectionType.PRESIDENTIAL || determinedType == ElectionType.PARLIAMENTARY) {
+                    if (resident.hasNation()) {
+                        try {
+                            Nation playerNation = resident.getNation();
+                            contextId = playerNation.getUUID();
+                            contextName = playerNation.getName();
+                            if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL;
+                        } catch (NotRegisteredException e) { return null; } catch (TownyException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+                if (contextId == null && (determinedType == null || determinedType == ElectionType.PARTY_LEADER)) {
+                    Party playerParty = partyManager.getPartyByMember(player.getUniqueId());
+                    if (playerParty != null) {
+                        contextId = playerParty.getPartyId();
+                        contextName = playerParty.getName();
+                        determinedType = ElectionType.PARTY_LEADER;
+                    } else if (determinedType == ElectionType.PARTY_LEADER) {
+                        messageManager.sendMessage(player, "election-info-fail-not-in-party-for-leader-election");
                         return null;
                     }
-                    determinedType = ElectionType.PARTY_LEADER;
-                } else {
+                }
+                if (contextId == null) {
                     messageManager.sendMessage(player, "election-info-fail-no-context");
                     return null;
                 }
+            } else {
+                messageManager.sendMessage(player, "towny-resident-not-found", "player_name", player.getName());
+                return null;
             }
-        } else { // 控制台且未指定上下文
+        } else {
             messageManager.sendMessage(sender, "error-election-context-required-console");
             return null;
         }
 
-        if (contextId == null || determinedType == null) { // 应该不会到这里，但作为保险
+        if (contextId == null || determinedType == null) {
             messageManager.sendMessage(sender, "error-election-context-resolution-failed");
             return null;
         }
 
-        // 获取活跃选举或最新完成的选举（用于results命令）
         Election election = electionManager.getActiveElection(contextId, determinedType);
-        if (election == null && (args.length == 0 || !args[0].equalsIgnoreCase("results"))) { // results 可以查已结束的
-            // 对于非results命令，如果找不到活跃的，则提示
+        if (election == null && isResultsCmd) {
+            Optional<Election> latestFinishedOpt = electionManager.getLatestFinishedElection(contextId, determinedType);
+            if (latestFinishedOpt.isPresent()) {
+                election = latestFinishedOpt.get();
+            }
+        }
+
+        if (election == null && !isResultsCmd) {
             messageManager.sendMessage(sender, "election-info-none-active-for-type", "context", contextName, "type", determinedType.getDisplayName());
             return null;
         }
-
         return new ParsedElectionContext(election, contextId, contextName, determinedType);
     }
 
-    // 内部类用于返回解析结果
-    private static class ParsedElectionContext {
-        final Election election; // 可能为null（例如查results时，只返回contextId和type）
+    private static class ParsedElectionContext { /* ... (保持不变) ... */
+        final Election election;
         final UUID contextId;
         final String contextName;
         final ElectionType determinedType;
@@ -182,32 +215,17 @@ public class ElectionCommandsHandler {
         }
     }
 
-
-    private boolean handleInfoCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!sender.hasPermission("townypolitical.election.info")) {
-            messageManager.sendMessage(sender, "error-no-permission");
-            return true;
-        }
-        ParsedElectionContext parsed = parseElectionContext(sender, subArgs, null);
-        if (parsed == null || parsed.election == null) {
-            // parseElectionContext 应该已经发送了错误消息
-            return true;
-        }
-        displayElectionInfo(sender, parsed.election);
-        return true;
-    }
-
     private void displayElectionInfo(CommandSender sender, Election election) {
+        // ... (方法主体与之前提供的一致，确保 dateFormat 正确使用) ...
         String contextName = electionManager.getContextName(election.getContextId(), election.getType());
         messageManager.sendRawMessage(sender, "election-info-header", "type", election.getType().getDisplayName(), "context", contextName);
-        messageManager.sendRawMessage(sender, "election-info-id", "id", election.getElectionId().toString());
+        messageManager.sendRawMessage(sender, "election-info-id", "id", election.getElectionId().toString().substring(0,8)); // 显示部分ID
         messageManager.sendRawMessage(sender, "election-info-status", "status", election.getStatus().getDisplayName());
 
         if (election.getStartTime() > 0) messageManager.sendRawMessage(sender, "election-info-start-time", "time", dateFormat.format(new Date(election.getStartTime())));
         if (election.getStatus() == ElectionStatus.REGISTRATION && election.getRegistrationEndTime() > 0) {
             messageManager.sendRawMessage(sender, "election-info-registration-ends", "time", dateFormat.format(new Date(election.getRegistrationEndTime())));
         }
-        // 假设投票在登记结束后开始
         if ((election.getStatus() == ElectionStatus.REGISTRATION || election.getStatus() == ElectionStatus.VOTING) && election.getRegistrationEndTime() > 0) {
             messageManager.sendRawMessage(sender, "election-info-voting-starts", "time", dateFormat.format(new Date(election.getRegistrationEndTime())));
         }
@@ -221,11 +239,12 @@ public class ElectionCommandsHandler {
         }
 
         if (election.getStatus() == ElectionStatus.FINISHED) {
+            // ... (显示获胜者逻辑) ...
             if (election.getType() == ElectionType.PRESIDENTIAL || election.getType() == ElectionType.PARTY_LEADER) {
                 election.getWinnerPlayerUUID().ifPresentOrElse(
                         uuid -> {
                             OfflinePlayer winner = Bukkit.getOfflinePlayer(uuid);
-                            messageManager.sendRawMessage(sender, "election-info-winner-player", "player_name", winner.getName() != null ? winner.getName() : "N/A");
+                            messageManager.sendRawMessage(sender, "election-info-winner-player", "player_name", winner.getName() != null ? winner.getName() : "ID:"+uuid.toString().substring(0,6));
                         },
                         () -> messageManager.sendRawMessage(sender, "election-info-no-winner")
                 );
@@ -233,7 +252,7 @@ public class ElectionCommandsHandler {
                 election.getWinnerPartyUUID().ifPresentOrElse(
                         uuid -> {
                             Party winningParty = partyManager.getParty(uuid);
-                            messageManager.sendRawMessage(sender, "election-info-winner-party", "party_name", winningParty != null ? winningParty.getName() : "N/A");
+                            messageManager.sendRawMessage(sender, "election-info-winner-party", "party_name", winningParty != null ? winningParty.getName() : "ID:"+uuid.toString().substring(0,6));
                         },
                         () -> messageManager.sendRawMessage(sender, "election-info-no-winner-party")
                 );
@@ -241,14 +260,33 @@ public class ElectionCommandsHandler {
         } else if (election.getStatus() == ElectionStatus.AWAITING_TIE_RESOLUTION) {
             messageManager.sendRawMessage(sender, "election-info-status-tie-resolution");
         }
-        String commandLabel = null;
-        messageManager.sendRawMessage(sender, "election-info-footer", "label", commandLabel.split(" ")[0] + " election");
+        messageManager.sendRawMessage(sender, "election-info-footer", "main_command_prefix", plugin.getCommand("townypolitical").getLabel());
     }
 
-    private boolean handleCandidatesCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!sender.hasPermission("townypolitical.election.info")) { /* ... */ return true;}
+    private boolean handleInfoCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!sender.hasPermission("townypolitical.election.info")) {
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
         ParsedElectionContext parsed = parseElectionContext(sender, subArgs, null);
-        if (parsed == null || parsed.election == null) return true;
+        if (parsed == null || parsed.election == null) {
+            // parseElectionContext or subsequent getLatestFinishedElection (if results cmd) handles messages
+            return true;
+        }
+        displayElectionInfo(sender, parsed.election);
+        return true;
+    }
+
+
+    private boolean handleCandidatesCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!sender.hasPermission("townypolitical.election.info")) {
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
+        ParsedElectionContext parsed = parseElectionContext(sender, subArgs, null);
+        if (parsed == null || parsed.election == null) {
+            return true;
+        }
 
         Election election = parsed.election;
         Collection<Candidate> candidates = election.getCandidates();
@@ -265,52 +303,78 @@ public class ElectionCommandsHandler {
                 Party party = partyManager.getParty(candidate.getPartyUUID());
                 if (party != null) partyNameStr = " (" + (candidate.getPartyNameCache() != null ? candidate.getPartyNameCache() : party.getName()) + ")";
                 else if (candidate.getPartyNameCache() != null) partyNameStr = " (" + candidate.getPartyNameCache() + ")";
+                else partyNameStr = " (未知政党)";
             }
-            String votesStr = (election.getStatus() == ElectionStatus.VOTING || election.getStatus() == ElectionStatus.FINISHED || election.getStatus() == ElectionStatus.AWAITING_TIE_RESOLUTION) ?
-                    " - " + messageManager.getRawMessage("election-candidates-votes", String.valueOf(candidate.getVotes())) : "";
-            messageManager.sendRawMessage(sender, "election-candidates-entry", "player_name", candidate.getResolvedPlayerName(), "party_info", partyNameStr, "votes_info", votesStr);
+
+            if (election.getStatus() == ElectionStatus.VOTING || election.getStatus() == ElectionStatus.FINISHED || election.getStatus() == ElectionStatus.AWAITING_TIE_RESOLUTION) {
+                messageManager.sendRawMessage(sender, "election-candidates-entry-with-votes",
+                        "player_name", candidate.getResolvedPlayerName(),
+                        "party_info", partyNameStr,
+                        "votes_count", String.valueOf(candidate.getVotes()));
+            } else {
+                messageManager.sendRawMessage(sender, "election-candidates-entry-no-votes",
+                        "player_name", candidate.getResolvedPlayerName(),
+                        "party_info", partyNameStr);
+            }
         }
         return true;
     }
 
+    // --- 修正 handleRegisterCommand ---
     private boolean handleRegisterCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!(sender instanceof Player)) { /* ... */ messageManager.sendMessage(sender, "error-player-only-command"); return true; }
+        if (!(sender instanceof Player)) {
+            messageManager.sendMessage(sender, "error-player-only-command");
+            return true;
+        }
         Player player = (Player) sender;
-        if (!player.hasPermission("townypolitical.election.registercandidate")) { /* ... */ messageManager.sendMessage(player, "error-no-permission"); return true; }
+        if (!player.hasPermission("townypolitical.election.registercandidate")) {
+            messageManager.sendMessage(player, "error-no-permission");
+            return true;
+        }
 
-        ParsedElectionContext parsed = parseElectionContext(player, subArgs, null); // Context can be implied by player
+        ParsedElectionContext parsed = parseElectionContext(player, subArgs, null);
         if (parsed == null || parsed.election == null) {
-            if(parsed == null && subArgs.length > 0) {} // parseElectionContext sent error
-            else messageManager.sendMessage(player, "election-register-fail-no-election-context");
+            if (parsed == null && subArgs.length > 0) { /* Message already sent by parseElectionContext */ }
+            else { messageManager.sendMessage(player, "election-register-fail-no-election-context"); }
             return true;
         }
         Election election = parsed.election;
 
+        // 允许在 PENDING_START 或 REGISTRATION 状态报名
         if (election.getStatus() != ElectionStatus.REGISTRATION && election.getStatus() != ElectionStatus.PENDING_START) {
             messageManager.sendMessage(player, "election-candidate-register-fail-closed");
             return true;
         }
+
+        // 调用 ElectionManager 中的核心逻辑
+        electionManager.registerCandidate(player, election);
         return true;
     }
 
+    // --- 修正 handleVoteCommand ---
     private boolean handleVoteCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!(sender instanceof Player)) { /* ... */ messageManager.sendMessage(sender, "error-player-only-command"); return true; }
+        if (!(sender instanceof Player)) {
+            messageManager.sendMessage(sender, "error-player-only-command");
+            return true;
+        }
         Player voter = (Player) sender;
-        if (!voter.hasPermission("townypolitical.election.vote")) { /* ... */ messageManager.sendMessage(voter, "error-no-permission"); return true; }
-
-        // Usage: /tp e vote [type] [context] <candidate_name> OR /tp e vote <candidate_name> (if context is self)
-        if (subArgs.length < 1) {
-            messageManager.sendMessage(voter, "error-invalid-arguments", "usage", "/" + commandLabel + " vote [type] [context] <candidate>");
+        if (!voter.hasPermission("townypolitical.election.vote")) {
+            messageManager.sendMessage(voter, "error-no-permission");
             return true;
         }
 
-        String candidateNameArg = subArgs[subArgs.length - 1]; // Candidate name is always last
+        if (subArgs.length < 1) {
+            messageManager.sendMessage(voter, "error-invalid-arguments", "usage", "/" + commandLabel + " vote [类型] [上下文] <候选人名称>");
+            return true;
+        }
+
+        String candidateNameArg = subArgs[subArgs.length - 1];
         String[] contextAndOptionalTypeArgs = Arrays.copyOfRange(subArgs, 0, subArgs.length - 1);
 
         ParsedElectionContext parsed = parseElectionContext(voter, contextAndOptionalTypeArgs, null);
         if (parsed == null || parsed.election == null) {
-            if(parsed == null && contextAndOptionalTypeArgs.length > 0){}
-            else messageManager.sendMessage(voter, "election-vote-fail-no-election-context");
+            if (parsed == null && contextAndOptionalTypeArgs.length > 0) { /* Message already sent */ }
+            else { messageManager.sendMessage(voter, "election-vote-fail-no-election-context"); }
             return true;
         }
         Election election = parsed.election;
@@ -320,46 +384,76 @@ public class ElectionCommandsHandler {
             return true;
         }
 
+        // 查找候选人时忽略大小写
         Optional<Candidate> targetCandidateOpt = election.getCandidates().stream()
                 .filter(c -> c.getResolvedPlayerName().equalsIgnoreCase(candidateNameArg))
                 .findFirst();
 
-        if (!targetCandidateOpt.isPresent()) {
+        if (targetCandidateOpt.isEmpty()) {
             messageManager.sendMessage(voter, "election-vote-fail-candidate-not-found", "candidate_name", candidateNameArg);
             return true;
         }
+
+        // 调用 ElectionManager 中的核心逻辑
+        electionManager.castVote(voter, election, targetCandidateOpt.get());
         return true;
     }
 
-    private boolean handleResultsCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!sender.hasPermission("townypolitical.election.info")) { /* ... */ messageManager.sendMessage(sender, "error-no-permission"); return true;}
+    // ... (handleResultsCommand, handleAdminStartCommand, handleAdminStopCommand, sendElectionHelp 保持与之前提供的Part 4/N一致) ...
+    // 确保它们也使用了 parseElectionContext (如果适用) 或者正确的 Election 对象获取方式
+    private boolean handleResultsCommand(CommandSender sender, String commandLabel, String[] subArgs) { /* ... 之前的完整实现 ... */
+        if (!sender.hasPermission("townypolitical.election.info")) {
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
 
         ParsedElectionContext parsed = parseElectionContext(sender, subArgs, null);
-        // For results, we might need to fetch a FINISHED election if no active one matches
+
         Election electionToShowResultsFor = null;
         if (parsed != null && parsed.election != null && parsed.election.getStatus() == ElectionStatus.FINISHED) {
             electionToShowResultsFor = parsed.election;
-        } else if (parsed != null) { // Context was parsed, but no active/finished election found by getActiveElection
-            Optional<Election> latestFinishedOpt = Optional.ofNullable(electionManager.getActiveElection(parsed.contextId, parsed.determinedType));
+        } else if (parsed != null) {
+            Optional<Election> latestFinishedOpt = electionManager.getLatestFinishedElection(parsed.contextId, parsed.determinedType);
             if (latestFinishedOpt.isPresent()) {
                 electionToShowResultsFor = latestFinishedOpt.get();
             }
         }
 
         if (electionToShowResultsFor == null) {
-            String contextNameForMsg = (parsed != null) ? parsed.contextName : String.join(" ", subArgs);
+            String contextNameForMsg = (parsed != null && parsed.contextName != null && !parsed.contextName.equals("N/A")) ?
+                    parsed.contextName : String.join(" ", subArgs);
+            if (contextNameForMsg.isEmpty() && sender instanceof Player) {
+                Player p = (Player) sender;
+                Resident res = TownyAPI.getInstance().getResident(p.getUniqueId());
+                if (res != null && res.hasNation()) {
+                    try { contextNameForMsg = res.getNation().getName(); } catch (NotRegisteredException ignored) {} catch (
+                            TownyException e) {
+                        throw new RuntimeException(e);
+                    }
+                } else {
+                    Party party = partyManager.getPartyByMember(p.getUniqueId());
+                    if (party != null) contextNameForMsg = party.getName();
+                }
+            }
+            if (contextNameForMsg.isEmpty() || contextNameForMsg.equals("N/A")) contextNameForMsg = "指定上下文";
+
             messageManager.sendMessage(sender, "election-results-none-found", "context", contextNameForMsg);
             return true;
         }
 
-        // displayElectionInfo already shows winner summary for FINISHED elections
+
+        if (electionToShowResultsFor.getStatus() != ElectionStatus.FINISHED) {
+            messageManager.sendMessage(sender, "election-results-not-finished", "status", electionToShowResultsFor.getStatus().getDisplayName());
+            displayElectionInfo(sender, electionToShowResultsFor);
+            return true;
+        }
+
         displayElectionInfo(sender, electionToShowResultsFor);
 
-        // For detailed parliamentary results:
         if(electionToShowResultsFor.getType() == ElectionType.PARLIAMENTARY && !electionToShowResultsFor.getPartySeatDistribution().isEmpty()){
             messageManager.sendRawMessage(sender, "election-results-parliament-seats-header");
             electionToShowResultsFor.getPartySeatDistribution().entrySet().stream()
-                    .sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed()) // Sort by seats desc
+                    .sorted(Map.Entry.<UUID, Integer>comparingByValue().reversed())
                     .forEach(entry -> {
                         Party party = partyManager.getParty(entry.getKey());
                         String partyName = (party != null) ? party.getName() : "未知政党 (" + entry.getKey().toString().substring(0,6) + ")";
@@ -369,11 +463,13 @@ public class ElectionCommandsHandler {
         return true;
     }
 
-    private boolean handleAdminStartCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!sender.hasPermission("townypolitical.election.manage")) { /* ... */ messageManager.sendMessage(sender, "error-no-permission"); return true; }
-        // Usage: /tp election start <nation_name_or_party_name> <type:parliament|president|leader>
+    private boolean handleAdminStartCommand(CommandSender sender, String commandLabel, String[] subArgs) { /* ... 之前的完整实现 ... */
+        if (!sender.hasPermission("townypolitical.election.manage")) {
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
         if (subArgs.length < 2) {
-            messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " start <上下文名称> <parliament|president|leader>");
+            messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " start <上下文名称> <PARLIAMENTARY|PRESIDENTIAL|PARTY_LEADER>");
             return true;
         }
 
@@ -383,6 +479,7 @@ public class ElectionCommandsHandler {
 
         if (!typeOpt.isPresent()) {
             messageManager.sendMessage(sender, "election-admin-start-invalid-type", "type", typeStr);
+            String availableTypes = Arrays.stream(ElectionType.values()).map(et -> et.name().toLowerCase()).collect(Collectors.joining(", "));
             return true;
         }
         ElectionType electionType = typeOpt.get();
@@ -392,19 +489,19 @@ public class ElectionCommandsHandler {
 
         if (electionType == ElectionType.PARTY_LEADER) {
             Party party = partyManager.getParty(contextName);
-            if (party == null) { /* ... error party not found ... */ messageManager.sendMessage(sender, "error-party-not-found", "party", contextName); return true; }
+            if (party == null) { messageManager.sendMessage(sender, "error-party-not-found", "party", contextName); return true; }
             contextId = party.getPartyId();
             resolvedContextName = party.getName();
-        } else { // PARLIAMENTARY or PRESIDENTIAL
+        } else {
             Nation nation = TownyAPI.getInstance().getNation(contextName);
-            if (nation == null) { /* ... error nation not found ... */ messageManager.sendMessage(sender, "error-nation-not-found", "nation", contextName); return true; }
+            if (nation == null) { messageManager.sendMessage(sender, "error-nation-not-found", "nation", contextName); return true; }
             contextId = nation.getUUID();
             resolvedContextName = nation.getName();
         }
 
         Election startedElection = null;
         if (electionType == ElectionType.PARTY_LEADER) {
-            startedElection = electionManager.startPartyLeaderElection(contextId, false); // false for manual start
+            startedElection = electionManager.startPartyLeaderElection(contextId, false);
         } else {
             startedElection = electionManager.startNationElection(contextId, electionType, false);
         }
@@ -417,19 +514,19 @@ public class ElectionCommandsHandler {
         return true;
     }
 
-    private boolean handleAdminStopCommand(CommandSender sender, String commandLabel, String[] subArgs) {
-        if (!sender.hasPermission("townypolitical.election.manage")) { /* ... */ messageManager.sendMessage(sender, "error-no-permission"); return true; }
-        // Usage: /tp election stop <type_if_known> <context_name> [reason...]
-        // Or    /tp election stop <election_id> [reason...]
+    private boolean handleAdminStopCommand(CommandSender sender, String commandLabel, String[] subArgs) { /* ... 之前的完整实现 ... */
+        if (!sender.hasPermission("townypolitical.election.manage")) {
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
         if (subArgs.length < 1) {
-            messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " stop <选举ID 或 类型+上下文> [原因]");
+            messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " stop <选举ID 或 类型 上下文名称> [原因]");
             return true;
         }
 
         String identifier = subArgs[0];
         String reason = (subArgs.length > 1) ? String.join(" ", Arrays.copyOfRange(subArgs, 1, subArgs.length)) : "管理员手动停止";
 
-        // Try to parse as Election ID first
         try {
             UUID electionId = UUID.fromString(identifier);
             Election electionToStop = electionManager.findElectionById(electionId);
@@ -437,36 +534,47 @@ public class ElectionCommandsHandler {
                 electionManager.cancelElection(electionToStop, reason + " (操作者: " + sender.getName() + ")");
                 messageManager.sendMessage(sender, "election-admin-stop-by-id-success", "id", electionId.toString().substring(0,8), "type", electionToStop.getType().getDisplayName(), "context", electionManager.getContextName(electionToStop.getContextId(), electionToStop.getType()));
                 return true;
-            }
-        } catch (IllegalArgumentException ignored) { /* Not a UUID, proceed to parse as type + context */ }
+            } // 如果ID找不到，继续尝试 类型+上下文
+        } catch (IllegalArgumentException ignored) { /* Not a UUID */ }
 
-        // Parse as type + context (context can be multi-word)
-        // /tp e stop parliament My Nation Alpha reason here
-        // args:      [stop, parliament, My, Nation, Alpha, reason, here]
-        // subArgs:   [parliament, My, Nation, Alpha, reason, here]
-        if (subArgs.length < 2) { // Need at least type and context name
+        if (subArgs.length < 2) {
             messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " stop <选举ID 或 类型 上下文名称> [原因]");
             return true;
         }
-        Optional<ElectionType> typeOpt = ElectionType.fromString(subArgs[0].toUpperCase());
+        Optional<ElectionType> typeOpt = ElectionType.fromString(subArgs[0].toUpperCase()); // 类型是第一个参数
         if (!typeOpt.isPresent()) {
             messageManager.sendMessage(sender, "election-admin-stop-invalid-type-for-context-stop", "type", subArgs[0]);
             return true;
         }
         ElectionType electionType = typeOpt.get();
 
-        // The rest of subArgs (after type) form the context name and optionally the reason
-        // This parsing is tricky if reason has multiple words and context name also has multiple words.
-        // Simplification: assume context name is one word if reason is present, or all remaining words if no reason.
+        // 上下文名称是类型之后的参数，直到原因参数（如果存在）
         String contextName;
-        if (subArgs.length > 2 && subArgs[subArgs.length-1].length() > 1) { // If there's likely a reason
-            // Heuristic: if last arg is longer than 1 char, assume it's start of reason or whole reason.
-            // A better way: commands like this often use flags like -r "reason here"
-            // For now, assume context name is subArgs[1]
-            contextName = subArgs[1];
-            if(subArgs.length > 2) reason = String.join(" ", Arrays.copyOfRange(subArgs, 2, subArgs.length));
-        } else { // Only type and context name
-            contextName = String.join(" ", Arrays.copyOfRange(subArgs, 1, subArgs.length));
+        int reasonStartIndex = -1;
+        // 尝试找到原因的开始。如果参数中除了类型和至少一个上下文名称词外还有更多，那些可能是原因
+        // /tp e stop type context part1 context part2 reason part1 reason part2
+        // subArgs = [type, context part1, context part2, reason part1, reason part2]
+        //           0      1              2              3              4
+        // 这里的解析逻辑比较复杂，如果上下文名称本身可能包含 "reason"
+        // 为了简化，假设上下文名称在类型之后，是单个词或到参数末尾（如果没有更多参数作为原因）
+        // 如果参数数量 > 2 (type, context, ...)，则 ... 可能是多词的context或reason
+        // 之前的解析:
+        // String contextName;
+        // if (subArgs.length > 2 && subArgs[subArgs.length-1].length() > 1) {
+        // contextName = subArgs[1]; // 假设上下文名是单个词
+        // if(subArgs.length > 2) reason = String.join(" ", Arrays.copyOfRange(subArgs, 2, subArgs.length));
+        // } else {
+        // contextName = String.join(" ", Arrays.copyOfRange(subArgs, 1, subArgs.length));
+        // }
+        // 这个解析对于多词上下文名称和多词原因会混淆。
+        // 更稳妥的方式： /tp election stop <type> "<context name>" [reason...]
+        // 或者 /tp election stop <election_id> [reason...] (已支持)
+        //
+        // 简化：假设上下文名称是 subArgs[1]
+        if (subArgs.length < 2) { /* 已在前面检查 */ return true;}
+        contextName = subArgs[1];
+        if (subArgs.length > 2) {
+            reason = String.join(" ", Arrays.copyOfRange(subArgs, 2, subArgs.length));
         }
 
 
@@ -475,12 +583,12 @@ public class ElectionCommandsHandler {
 
         if (electionType == ElectionType.PARTY_LEADER) {
             Party party = partyManager.getParty(contextName);
-            if (party == null) { /* ... error party not found ... */ messageManager.sendMessage(sender, "error-party-not-found", "party", contextName); return true; }
+            if (party == null) { messageManager.sendMessage(sender, "error-party-not-found", "party", contextName); return true; }
             contextId = party.getPartyId();
             resolvedContextName = party.getName();
         } else {
             Nation nation = TownyAPI.getInstance().getNation(contextName);
-            if (nation == null) { /* ... error nation not found ... */ messageManager.sendMessage(sender, "error-nation-not-found", "nation", contextName); return true; }
+            if (nation == null) { messageManager.sendMessage(sender, "error-nation-not-found", "nation", contextName); return true; }
             contextId = nation.getUUID();
             resolvedContextName = nation.getName();
         }
@@ -497,11 +605,11 @@ public class ElectionCommandsHandler {
     }
 
 
-    private void sendElectionHelp(CommandSender sender, String commandLabel) {
+    private void sendElectionHelp(CommandSender sender, String commandLabel) { /* ... 之前的完整实现 ... */
         String displayLabel = commandLabel.split(" ")[0];
         if (displayLabel.equalsIgnoreCase("tp") || displayLabel.equalsIgnoreCase("townypolitical") || displayLabel.equalsIgnoreCase("tpol")) {
             displayLabel += " election";
-        } // else, assume it's an alias like /telection
+        }
 
         messageManager.sendRawMessage(sender, "help-election-header", "label", displayLabel);
         if (sender.hasPermission("townypolitical.election.info")) {

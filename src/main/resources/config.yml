@@ -25,31 +25,31 @@ party:
   # 创建新政党所需的资金。如果为0或经济系统未启用，则不花费。
   creation_cost: 1000.0
   # 政党改名所需的资金。
-  rename_cost: 500.0
+  rename_cost: 5000.0
   # 政党名称设置
   name:
     min_length: 3             # 政党名称最小长度 (字符数)
-    max_length: 16            # 政党名称最大长度 (字符数)
+    max_length: 32            # 政党名称最大长度 (字符数)
     # 用于验证政党名称的正则表达式 (高级选项，谨慎修改)。
     # 默认允许: 字母 (a-z, A-Z), 数字 (0-9), 下划线 (_), 以及中文字符。
     # 注意: Java的正则表达式需要对某些特殊字符进行转义 (例如 `\` 写为 `\\`)。
     regex: "^[a-zA-Z0-9_\\u4e00-\\u9fa5]+$"
   # 每个政党的最大成员数量 (包括领袖、管理员、普通成员，不包括申请者)。
   # 设置为 0 表示无限制。
-  max_members: 50
+  max_members: 0
   # 当政党解散时，是否向全服广播通知。
-  broadcast_disband: false
+  broadcast_disband: true
   # 政党领袖选举 (如果启用党内自动选举周期)
   leader_election:
     # 自动安排党内领袖选举的间隔天数。
     # 设置为 0 表示禁用自动周期性选举，只能通过命令或手动方式触发。
-    auto_schedule_interval_days: 0
+    auto_schedule_interval_days: 14
     # 候选人登记阶段的持续时间 (单位: 秒)。
     registration_duration_seconds: 43200 # 12 小时
     # 投票阶段的持续时间 (单位: 秒)。
     voting_duration_seconds: 86400    # 24 小时
     # 政党至少需要有多少名正式成员，才会触发自动的周期性领袖选举。
-    min_members_to_auto_elect: 5
+    min_members_to_auto_elect: 2
 
 # 国家 (Nation) 及政体 (Government) 相关配置
 nation:
@@ -64,11 +64,11 @@ nation:
   # 君主专制 (Absolute Monarchy) 政体的特殊效果
   absolute_monarchy:
     # 国家操作 (如Towny建城、宣战、维护费等，需要具体集成点) 的金钱花费乘数。
-    # 例如，1.25 表示花费增加 25%。设置为 1.0 则无影响。
+    # 例如，1.5 表示花费增加 50%。设置为 1.0 则无影响。
     # 注意：此功能的具体实现需要插件在Towny的相关花费点进行拦截和修改，
     # 或者通过SiegeWar等其他插件的API（如果它们支持外部修改花费的接口）。
     # 本插件目前仅提供此配置项，实际效果取决于进一步的集成开发。
-    cost_multiplier: 1.25
+    cost_multiplier: 1.5
     # 在君主专制政体下，是否禁止成立新的政党或限制现有政党参与政治活动。
     # 如果为 true，可能会阻止创建新党，或阻止非“皇室指定”的党派参与选举（如果实现了此类逻辑）。
     restrict_party_politics: false
@@ -77,8 +77,8 @@ nation:
 elections:
   # 国家级选举 (议会/总统) 的各阶段默认持续时间 (单位: 秒)。
   # 这些值会被用于由本插件发起的选举。
-  registration_duration_seconds: 86400  # 候选人登记阶段: 24 小时
-  voting_duration_seconds: 172800       # 投票阶段: 48 小时
+  registration_duration_seconds: 43200  # 候选人登记阶段: 12 小时
+  voting_duration_seconds: 86400      # 投票阶段: 24 小时
   # 选举结果公示期 (单位: 秒)。在此期间，选举结果可见但选举对象仍被认为是“活跃”的。
   # 之后，选举对象会被归档。设置为 0 表示立即归档。
   results_display_duration_seconds: 43200 # 12 小时
@@ -87,12 +87,12 @@ elections:
   # interval_days 设置为 0 表示该类型的选举不自动按周期调度，只能通过管理员命令手动开启。
   nation_election_schedule:
     parliamentary: # 议会选举 (用于 议会制共和制、君主立宪制、半总统制)
-      interval_days: 30
+      interval_days: 3
       # 至少需要有多少个符合条件的政党宣布参选（或被认为会自动参选），选举才会自动开始。
       # (此功能较复杂，当前简化为检查服务器总政党数，未来可细化)
       min_participating_parties_to_start: 1
     presidential: # 总统选举 (用于 总统制共和制、半总统制)
-      interval_days: 60
+      interval_days: 7
       # 至少需要有多少名合格候选人报名登记，选举才会从登记阶段进入投票阶段。
       # 如果登记结束时候选人数量少于此值，选举可能会被取消。
       min_candidates_for_voting_stage: 1 # 若为0或1，只要有候选人就进入投票

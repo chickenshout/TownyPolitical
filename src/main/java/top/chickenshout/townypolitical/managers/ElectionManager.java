@@ -46,7 +46,7 @@ public class ElectionManager {
     // <TaskKey (String, e.g., contextId_type), BukkitTask> - 存储周期性调度任务
     private final Map<String, BukkitTask> scheduledCycleTasks;
     // <ElectionUUID, BukkitTask> - 存储选举阶段推进任务 (登记结束->投票，投票结束->计票，以及结果公示后的归档任务)
-    private final Map<UUID, BukkitTask> scheduledPhaseTasks;
+    private final Map<String, BukkitTask> scheduledPhaseTasks;
 
 
     private final File activeElectionsDataFolder;
@@ -73,14 +73,14 @@ public class ElectionManager {
 
         this.activeElectionsDataFolder = new File(baseElectionsFolder, "active");
         if (!activeElectionsDataFolder.exists()) {
-            if (!activeElectionsDataFolder.mkdirs()){
+            if (!activeElectionsDataFolder.mkdirs()) {
                 plugin.getLogger().severe("Could not create active elections data folder!");
             }
         }
 
         this.archivedElectionsDataFolder = new File(baseElectionsFolder, "archived");
         if (!archivedElectionsDataFolder.exists()) {
-            if (!archivedElectionsDataFolder.mkdirs()){
+            if (!archivedElectionsDataFolder.mkdirs()) {
                 plugin.getLogger().severe("Could not create archived elections data folder!");
             }
         }
@@ -114,6 +114,7 @@ public class ElectionManager {
     /**
      * 为指定国家安排下一次所需类型的选举（议会/总统）。
      * 此方法会检查国家政体、上次选举完成时间、配置间隔，并创建Bukkit任务。
+     *
      * @param nationUUID 国家的UUID
      */
     public void scheduleNextElectionForNation(UUID nationUUID) {
@@ -205,6 +206,7 @@ public class ElectionManager {
 
     /**
      * 为指定政党安排下一次党魁选举。
+     *
      * @param partyId 政党的UUID
      */
     public void scheduleNextPartyLeaderElection(UUID partyId) {
@@ -267,10 +269,12 @@ public class ElectionManager {
         }.runTaskLater(plugin, Math.max(1, delayTicks));
         scheduledCycleTasks.put(taskKey, task);
     }
+
     /**
      * 启动一个国家的指定类型选举。
-     * @param nationUUID 国家UUID
-     * @param electionType 选举类型 (PARLIAMENTARY 或 PRESIDENTIAL)
+     *
+     * @param nationUUID      国家UUID
+     * @param electionType    选举类型 (PARLIAMENTARY 或 PRESIDENTIAL)
      * @param isScheduledCall 是否由周期性调度器调用 (用于控制一些日志和行为)
      * @return 如果成功启动，返回创建的Election对象；否则返回null。
      */
@@ -298,11 +302,13 @@ public class ElectionManager {
         GovernmentType govType = politics.getGovernmentType();
 
         if (electionType == ElectionType.PARLIAMENTARY && !govType.hasParliament()) {
-            if (!isScheduledCall) plugin.getLogger().info("[ElectionManager] Nation " + nation.getName() + " (" + govType.getDisplayName() + ") does not support parliamentary elections.");
+            if (!isScheduledCall)
+                plugin.getLogger().info("[ElectionManager] Nation " + nation.getName() + " (" + govType.getDisplayName() + ") does not support parliamentary elections.");
             return null;
         }
         if (electionType == ElectionType.PRESIDENTIAL && !govType.hasDirectPresidentialElection()) {
-            if (!isScheduledCall) plugin.getLogger().info("[ElectionManager] Nation " + nation.getName() + " (" + govType.getDisplayName() + ") does not support direct presidential elections.");
+            if (!isScheduledCall)
+                plugin.getLogger().info("[ElectionManager] Nation " + nation.getName() + " (" + govType.getDisplayName() + ") does not support direct presidential elections.");
             return null;
         }
 
@@ -311,7 +317,8 @@ public class ElectionManager {
             int minParties = plugin.getConfig().getInt("elections.nation_election_schedule.parliamentary.min_participating_parties", 1);
             if (partyManager.getAllParties().size() < minParties) { // 简化检查：总政党数，更精确的是检查有多少政党愿意在该国参选
                 plugin.getLogger().info("[ElectionManager] Not enough parties (" + partyManager.getAllParties().size() + "/" + minParties + ") to start parliamentary election in " + nation.getName());
-                if (!isScheduledCall) messageManager.sendMessage(Bukkit.getConsoleSender(), "election-start-fail-not-enough-parties", "nation", nation.getName(), "min_parties", String.valueOf(minParties));
+                if (!isScheduledCall)
+                    messageManager.sendMessage(Bukkit.getConsoleSender(), "election-start-fail-not-enough-parties", "nation", nation.getName(), "min_parties", String.valueOf(minParties));
                 // 重新安排到下一个周期
                 scheduleNextElectionForNation(nationUUID);
                 return null;
@@ -340,7 +347,7 @@ public class ElectionManager {
         plugin.getLogger().info("[ElectionManager] " + electionType.getDisplayName() + " registration started for nation: " + nation.getName() + " (ID: " + electionId + ")");
 
         // 安排任务：登记截止后推进到投票阶段
-        cancelScheduledPhaseTask(electionId); // 清除可能存在的旧同ID阶段任务
+        cancelScheduledPhaseTask(electionId.toString()); // 清除可能存在的旧同ID阶段任务
         BukkitTask phaseTask = new BukkitRunnable() {
             @Override
             public void run() {
@@ -349,14 +356,15 @@ public class ElectionManager {
                 advanceElectionToVoting(electionId);
             }
         }.runTaskLater(plugin, Math.max(1, registrationDurationTicks));
-        scheduledPhaseTasks.put(electionId, phaseTask);
+        scheduledPhaseTasks.put(electionId.toString(), phaseTask);
 
         return election;
     }
 
     /**
      * 启动一个政党的党魁选举。
-     * @param partyId 政党UUID
+     *
+     * @param partyId         政党UUID
      * @param isScheduledCall 是否由周期性调度器调用
      * @return 如果成功启动，返回创建的Election对象；否则返回null。
      */
@@ -379,7 +387,8 @@ public class ElectionManager {
         int minMembers = plugin.getConfig().getInt("party.leader_election.min_members_to_auto_elect", 5);
         if (party.getOfficialMemberIds().size() < minMembers) {
             plugin.getLogger().info("[ElectionManager] Party " + party.getName() + " has " + party.getOfficialMemberIds().size() + "/" + minMembers + " members. Leader election not started.");
-            if (!isScheduledCall) messageManager.sendMessage(Bukkit.getConsoleSender(), "party-leader-election-fail-min-members", "party", party.getName(), "min", String.valueOf(minMembers));
+            if (!isScheduledCall)
+                messageManager.sendMessage(Bukkit.getConsoleSender(), "party-leader-election-fail-min-members", "party", party.getName(), "min", String.valueOf(minMembers));
             // 重新安排到下一个周期 (如果这是自动调度的一部分)
             if (isScheduledCall) scheduleNextPartyLeaderElection(partyId);
             return null;
@@ -403,7 +412,7 @@ public class ElectionManager {
         broadcastToPartyMembers(party, "election-registration-start-party-leader", "party_name", party.getName());
         plugin.getLogger().info("[ElectionManager] Party Leader election registration started for party: " + party.getName() + " (ID: " + electionId + ")");
 
-        cancelScheduledPhaseTask(electionId);
+        cancelScheduledPhaseTask(electionId.toString());
         BukkitTask phaseTask = new BukkitRunnable() {
             @Override
             public void run() {
@@ -412,13 +421,14 @@ public class ElectionManager {
                 advanceElectionToVoting(electionId);
             }
         }.runTaskLater(plugin, Math.max(1, registrationDurationTicks));
-        scheduledPhaseTasks.put(electionId, phaseTask);
+        scheduledPhaseTasks.put(electionId.toString(), phaseTask);
         return election;
     }
 
     /**
      * 将指定ID的选举从登记阶段推进到投票阶段。
      * 由 scheduledPhaseTasks 中的任务调用。
+     *
      * @param electionId 选举的UUID
      */
     public void advanceElectionToVoting(UUID electionId) {
@@ -437,15 +447,16 @@ public class ElectionManager {
         // 确保当前时间确实晚于或等于登记截止时间
         if (System.currentTimeMillis() < election.getRegistrationEndTime()) {
             plugin.getLogger().warning("[ElectionManager] advanceElectionToVoting: Attempted to advance election " + electionId + " to voting prematurely. Current time: " + System.currentTimeMillis() + ", Reg End: " + election.getRegistrationEndTime() + ". Rescheduling.");
-            cancelScheduledPhaseTask(electionId); // 取消当前（可能错误的）任务
+            cancelScheduledPhaseTask(electionId.toString()); // 取消当前（可能错误的）任务
             long newDelayTicks = Math.max(1, (election.getRegistrationEndTime() - System.currentTimeMillis()) / 50L);
             BukkitTask phaseTask = new BukkitRunnable() {
-                @Override public void run() {
+                @Override
+                public void run() {
                     scheduledPhaseTasks.remove(electionId);
                     advanceElectionToVoting(electionId);
                 }
             }.runTaskLater(plugin, newDelayTicks);
-            scheduledPhaseTasks.put(electionId, phaseTask);
+            scheduledPhaseTasks.put(electionId.toString(), phaseTask);
             return;
         }
 
@@ -477,7 +488,7 @@ public class ElectionManager {
             return;
         }
 
-        cancelScheduledPhaseTask(electionId); // 清除旧的（可能是登记结束）任务
+        cancelScheduledPhaseTask(electionId.toString()); // 清除旧的（可能是登记结束）任务
         BukkitTask phaseTask = new BukkitRunnable() {
             @Override
             public void run() {
@@ -486,19 +497,20 @@ public class ElectionManager {
                 finishElection(electionId);
             }
         }.runTaskLater(plugin, Math.max(1, votingDurationRemainingTicks));
-        scheduledPhaseTasks.put(electionId, phaseTask);
+        scheduledPhaseTasks.put(electionId.toString(), phaseTask);
     }
 
     /**
      * 结束指定ID的选举，进行计票、结果判定、宣布结果、更新Towny领袖、归档并安排下一次。
      * 由 scheduledPhaseTasks 中的任务调用，或管理员命令强制调用（需额外处理）。
+     *
      * @param electionId 选举的UUID
      */
     public void finishElection(UUID electionId) {
         Election election = electionsById.get(electionId);
         if (election == null) {
             plugin.getLogger().warning("[ElectionManager] finishElection: Election with ID " + electionId + " not found.");
-            scheduledPhaseTasks.remove(electionId); // 清理无效任务引用
+            scheduledPhaseTasks.remove(electionId.toString()); // 清理无效任务引用
             scheduledPhaseTasks.remove(electionId + "_archive");
             return;
         }
@@ -512,15 +524,16 @@ public class ElectionManager {
         // 确保当前时间确实晚于或等于投票截止时间 (除非是特殊状态如平票处理后)
         if (election.getStatus() == ElectionStatus.VOTING && System.currentTimeMillis() < election.getEndTime()) {
             plugin.getLogger().warning("[ElectionManager] finishElection: Attempted to finish election " + electionId + " (Voting) prematurely. Rescheduling.");
-            cancelScheduledPhaseTask(electionId); // 取消当前（可能错误的）任务
+            cancelScheduledPhaseTask(electionId.toString()); // 取消当前（可能错误的）任务
             long newDelayTicks = Math.max(1, (election.getEndTime() - System.currentTimeMillis()) / 50L);
             BukkitTask phaseTask = new BukkitRunnable() {
-                @Override public void run() {
+                @Override
+                public void run() {
                     scheduledPhaseTasks.remove(electionId);
                     finishElection(electionId);
                 }
             }.runTaskLater(plugin, newDelayTicks);
-            scheduledPhaseTasks.put(electionId, phaseTask);
+            scheduledPhaseTasks.put(electionId.toString(), phaseTask);
             return;
         }
 
@@ -544,7 +557,7 @@ public class ElectionManager {
         // 结果公示期后归档
         long displayDurationTicks = plugin.getConfig().getLong("elections.results_display_duration_seconds", 43200) * 20L;
         final String archiveTaskKey = electionId.toString() + "_archive";
-        cancelScheduledPhaseTask(UUID.fromString(archiveTaskKey)); // 清除可能存在的旧归档任务
+        cancelScheduledPhaseTask(archiveTaskKey); // 清除可能存在的旧归档任务
 
         if (displayDurationTicks > 0) {
             BukkitTask archiveTask = new BukkitRunnable() {
@@ -560,7 +573,7 @@ public class ElectionManager {
                     }
                 }
             }.runTaskLater(plugin, displayDurationTicks);
-            scheduledPhaseTasks.put(UUID.fromString(archiveTaskKey), archiveTask);
+            scheduledPhaseTasks.put(archiveTaskKey, archiveTask);
         } else { // 无公示期，立即归档
             archiveElection(election);
             electionsById.remove(electionId);
@@ -585,8 +598,9 @@ public class ElectionManager {
 
     /**
      * 取消一个正在进行的选举。
+     *
      * @param election 要取消的选举对象
-     * @param reason 取消原因，会向相关方通知
+     * @param reason   取消原因，会向相关方通知
      */
     public void cancelElection(Election election, String reason) {
         if (election == null || election.getStatus() == ElectionStatus.FINISHED || election.getStatus() == ElectionStatus.CANCELLED) {
@@ -596,8 +610,8 @@ public class ElectionManager {
         plugin.getLogger().info("[ElectionManager] Cancelling " + election.getType().getDisplayName() + " (ID: " + election.getElectionId() + ") for " + contextName + ". Reason: " + reason);
 
         // 取消所有相关的阶段性调度任务
-        cancelScheduledPhaseTask(election.getElectionId()); // 取消可能的投票结束任务或登记结束任务
-        cancelScheduledPhaseTask(UUID.fromString(election.getElectionId() + "_archive")); // 取消可能的归档任务
+        cancelScheduledPhaseTask(election.getElectionId().toString()); // 取消可能的投票结束任务或登记结束任务
+        cancelScheduledPhaseTask(election.getElectionId() + "_archive"); // 取消可能的归档任务
 
         election.setStatus(ElectionStatus.CANCELLED);
         updateLastCompletionTime(election); // 取消的选举也更新时间戳 (或不更新，取决于是否想它尽快重试)
@@ -627,6 +641,7 @@ public class ElectionManager {
     /**
      * 核心方法：计算选举结果，更新Election对象的winner字段，
      * 并调用 updateLastCompletionTime 和 applyElectionResultsToTowny。
+     *
      * @param election 需要判定结果的选举对象 (其状态应为 COUNTING)
      */
     private void determineElectionResults(Election election) {
@@ -680,12 +695,11 @@ public class ElectionManager {
                         plugin.getLogger().info("Parliamentary election " + election.getElectionId() + " had candidates but no party received votes (e.g. only independents ran and config disallows them seats).");
                         election.setWinnerPartyUUID(null);
                         election.setPartySeatDistribution(new HashMap<>());
-                    } else if (partyTotalVotes.isEmpty() && candidates.isEmpty()){
+                    } else if (partyTotalVotes.isEmpty() && candidates.isEmpty()) {
                         plugin.getLogger().info("No parties or candidates received votes in parliamentary election: " + election.getElectionId());
                         election.setWinnerPartyUUID(null);
                         election.setPartySeatDistribution(new HashMap<>());
-                    }
-                    else {
+                    } else {
                         int totalParliamentSeats = getConfiguredTotalParliamentSeats(election.getContextId(), govTypeForNationElection);
                         double representationThresholdPercent = plugin.getConfig().getDouble("elections.parliament.representation_threshold_percent", 0.0);
                         long totalVotesCastInElection = partyTotalVotes.values().stream().mapToLong(Integer::intValue).sum();
@@ -699,17 +713,16 @@ public class ElectionManager {
                                 })
                                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-                        if(eligiblePartyVotes.isEmpty() && !partyTotalVotes.isEmpty()){
+                        if (eligiblePartyVotes.isEmpty() && !partyTotalVotes.isEmpty()) {
                             plugin.getLogger().info("No parties met the representation threshold of " + representationThresholdPercent + "% in parliamentary election: " + election.getElectionId());
                             election.setWinnerPartyUUID(null);
                             election.setPartySeatDistribution(new HashMap<>());
-                        } else if (eligiblePartyVotes.isEmpty() && partyTotalVotes.isEmpty()){
+                        } else if (eligiblePartyVotes.isEmpty() && partyTotalVotes.isEmpty()) {
                             // This case should be caught by partyTotalVotes.isEmpty() above
                             plugin.getLogger().info("No eligible parties and no total votes in parliamentary election: " + election.getElectionId());
                             election.setWinnerPartyUUID(null);
                             election.setPartySeatDistribution(new HashMap<>());
-                        }
-                        else {
+                        } else {
                             Map<UUID, Integer> seatDistribution = calculateSeatsLargestRemainderHare(eligiblePartyVotes, totalParliamentSeats);
                             election.setPartySeatDistribution(seatDistribution);
 
@@ -722,7 +735,7 @@ public class ElectionManager {
 
                             if (majorityPartyUUID != null) {
                                 Party p = partyManager.getParty(majorityPartyUUID);
-                                String partyName = p != null ? p.getName() : "ID: " + majorityPartyUUID.toString().substring(0,6);
+                                String partyName = p != null ? p.getName() : "ID: " + majorityPartyUUID.toString().substring(0, 6);
                                 plugin.getLogger().info("Majority party in " + getContextName(election.getContextId(), election.getType()) + " is " + partyName + " with " + seatDistribution.get(majorityPartyUUID) + " seats.");
                             } else {
                                 plugin.getLogger().info("No majority party determined (no party won seats or tie for zero seats) in " + getContextName(election.getContextId(), election.getType()) + " parliamentary election.");
@@ -746,7 +759,7 @@ public class ElectionManager {
 
         List<Candidate> leadingCandidates = election.getLeadingCandidates();
 
-        if (leadingCandidates.isEmpty()){ // Should not happen if sortedCandidates is not empty
+        if (leadingCandidates.isEmpty()) { // Should not happen if sortedCandidates is not empty
             election.setWinnerPlayerUUID(null);
             plugin.getLogger().warning("leadingCandidates was empty despite sortedCandidates having entries for election: " + election.getElectionId());
             return;
@@ -774,7 +787,7 @@ public class ElectionManager {
                     broadcastToAdmins("election-tie-admin-decision-needed",
                             "election_id", election.getElectionId().toString(),
                             "type", election.getType().getDisplayName(),
-                            "context", getContextName(election.getContextId(),election.getType()),
+                            "context", getContextName(election.getContextId(), election.getType()),
                             "candidates", leadingCandidates.stream().map(Candidate::getResolvedPlayerName).collect(Collectors.joining(", "))
                     );
                     // TODO: Need admin command to set winner for an AWAITING_TIE_RESOLUTION election.
@@ -847,9 +860,11 @@ public class ElectionManager {
         }
         return seatDistribution;
     }
+
     /**
      * 将选举结果（新总统或总理）应用到Towny国家的King设置上。
      * 由 determineElectionResults 调用。
+     *
      * @param election 已完成并判定出结果的选举对象
      */
     private void applyElectionResultsToTowny(Election election) {
@@ -952,6 +967,7 @@ public class ElectionManager {
     /**
      * 在选举成功结束（状态为FINISHED）后，更新对应上下文（国家或政党）的上次选举完成时间戳。
      * 由 determineElectionResults 调用。
+     *
      * @param election 已完成的选举对象
      */
     private void updateLastCompletionTime(Election election) {
@@ -986,8 +1002,9 @@ public class ElectionManager {
 
     /**
      * 向特定选举上下文（国家的所有公民或政党的所有成员）广播消息。
-     * @param election 相关的选举对象，用于确定上下文和类型
-     * @param messageKey 消息文件中的键
+     *
+     * @param election     相关的选举对象，用于确定上下文和类型
+     * @param messageKey   消息文件中的键
      * @param placeholders 占位符
      */
     private void broadcastToContext(Election election, String messageKey, Object... placeholders) {
@@ -1003,8 +1020,9 @@ public class ElectionManager {
 
     /**
      * 向指定国家的所有在线居民广播消息（带插件前缀）。
-     * @param nation 目标国家
-     * @param messageKey 消息键
+     *
+     * @param nation       目标国家
+     * @param messageKey   消息键
      * @param placeholders 占位符
      */
     private void broadcastToNation(Nation nation, String messageKey, Object... placeholders) {
@@ -1024,19 +1042,20 @@ public class ElectionManager {
 
     /**
      * 向指定政党的所有在线正式成员广播消息（带插件前缀）。
-     * @param party 目标政党
-     * @param messageKey 消息键
+     *
+     * @param party        目标政党
+     * @param messageKey   消息键
      * @param placeholders 占位符
      */
     private void broadcastToPartyMembers(Party party, String messageKey, Object... placeholders) {
         if (party == null) return;
         String message = messageManager.getMessage(messageKey, placeholders);
         String prefixedMessage = messageManager.getFormattedPrefix() + message;
-        for(UUID memberId : party.getOfficialMemberIds()){
+        for (UUID memberId : party.getOfficialMemberIds()) {
             OfflinePlayer offlineP = Bukkit.getOfflinePlayer(memberId);
-            if(offlineP.isOnline()){
+            if (offlineP.isOnline()) {
                 Player p = offlineP.getPlayer();
-                if(p != null) p.sendMessage(prefixedMessage);
+                if (p != null) p.sendMessage(prefixedMessage);
             }
         }
         plugin.getLogger().info("[Party Broadcast to " + party.getName() + "] " + message);
@@ -1044,7 +1063,8 @@ public class ElectionManager {
 
     /**
      * 向具有特定权限的在线管理员广播消息（带插件前缀）。
-     * @param messageKey 消息键
+     *
+     * @param messageKey   消息键
      * @param placeholders 占位符
      */
     private void broadcastToAdmins(String messageKey, Object... placeholders) {
@@ -1057,8 +1077,10 @@ public class ElectionManager {
     }
 
     // --- Helpers & Utils ---
+
     /**
      * 取消一个周期性选举调度任务。
+     *
      * @param taskKey 任务的唯一键 (例如 contextId + "_" + typeName)
      */
     private void cancelScheduledCycleTask(String taskKey) {
@@ -1074,26 +1096,23 @@ public class ElectionManager {
 
     /**
      * 取消一个选举的阶段性推进任务（包括可能的归档任务）。
-     * @param electionId 选举的UUID，作为任务键或任务键的一部分。
+     *
      */
-    private void cancelScheduledPhaseTask(UUID electionId) {
-        if (electionId == null) return;
-        BukkitTask mainPhaseTask = scheduledPhaseTasks.remove(electionId);
-        if (mainPhaseTask != null) {
+    private void cancelScheduledPhaseTask(String taskKey) {
+        if (taskKey == null) return;
+        BukkitTask phaseTask = scheduledPhaseTasks.remove(taskKey); // 使用 String key 移除
+        if (phaseTask != null) {
             try {
-                if (!mainPhaseTask.isCancelled()) mainPhaseTask.cancel();
+                if (!phaseTask.isCancelled()) phaseTask.cancel();
             } catch (Exception e) { /* ignore */ }
         }
-        BukkitTask archiveTask = scheduledPhaseTasks.remove(electionId.toString() + "_archive"); // 归档任务的key约定
-        if (archiveTask != null) {
-            try {
-                if (!archiveTask.isCancelled()) archiveTask.cancel();
-            } catch (Exception e) { /* ignore */ }
-        }
+        // 如果归档任务也用同一个 map 但不同 key 格式（如加后缀），那么这里也应该尝试移除它
+        // 但我们已经在 cancelElection 和 finishElection 中单独处理了归档任务的取消
     }
 
     /**
      * 通过选举ID查找一个当前活跃（或在公示期）的选举。
+     *
      * @param electionId 选举UUID
      * @return Optional<Election>
      */
@@ -1103,8 +1122,9 @@ public class ElectionManager {
 
     /**
      * 获取指定上下文和类型的当前活跃选举（非FINISHED或CANCELLED）。
+     *
      * @param contextUUID 上下文ID (Nation/Party)
-     * @param type 选举类型
+     * @param type        选举类型
      * @return Optional<Election>
      */
     public Election getActiveElection(UUID contextUUID, ElectionType type) {
@@ -1119,6 +1139,7 @@ public class ElectionManager {
 
     /**
      * 获取指定上下文所有活跃的选举。
+     *
      * @param contextUUID 上下文ID
      * @return 活跃选举列表
      */
@@ -1133,18 +1154,19 @@ public class ElectionManager {
 
     /**
      * 获取特定上下文（如国家或政党）的易读名称。
+     *
      * @param contextId 上下文UUID
-     * @param type 选举类型，用于判断上下文是国家还是政党
+     * @param type      选举类型，用于判断上下文是国家还是政党
      * @return 上下文的名称，如果找不到则返回默认字符串。
      */
     public String getContextName(UUID contextId, ElectionType type) {
         if (contextId == null || type == null) return "未知上下文";
         if (type == ElectionType.PARLIAMENTARY || type == ElectionType.PRESIDENTIAL) {
             Nation nation = TownyAPI.getInstance().getNation(contextId);
-            return nation != null ? nation.getName() : "未知国家 (ID: " + contextId.toString().substring(0,6) + ")";
+            return nation != null ? nation.getName() : "未知国家 (ID: " + contextId.toString().substring(0, 6) + ")";
         } else if (type == ElectionType.PARTY_LEADER) {
             Party party = partyManager.getParty(contextId);
-            return party != null ? party.getName() : "未知政党 (ID: " + contextId.toString().substring(0,6) + ")";
+            return party != null ? party.getName() : "未知政党 (ID: " + contextId.toString().substring(0, 6) + ")";
         }
         return "未知上下文类型";
     }
@@ -1249,20 +1271,29 @@ public class ElectionManager {
 
                 if (config.isList("voters")) {
                     config.getStringList("voters").forEach(voterUuidStr -> {
-                        try { election.getVotersInternal().add(UUID.fromString(voterUuidStr)); } // 需要一个内部访问voters的方法
-                        catch (IllegalArgumentException e) {plugin.getLogger().warning("[ElectionManager] Skipping invalid voter UUID in " + electionFile.getName());}
+                        try {
+                            election.getVotersInternal().add(UUID.fromString(voterUuidStr));
+                        } // 需要一个内部访问voters的方法
+                        catch (IllegalArgumentException e) {
+                            plugin.getLogger().warning("[ElectionManager] Skipping invalid voter UUID in " + electionFile.getName());
+                        }
                     });
                 }
 
-                if (config.contains("winnerPlayerUUID")) election.setWinnerPlayerUUID(UUID.fromString(config.getString("winnerPlayerUUID")));
-                if (config.contains("winnerPartyUUID")) election.setWinnerPartyUUID(UUID.fromString(config.getString("winnerPartyUUID")));
+                if (config.contains("winnerPlayerUUID"))
+                    election.setWinnerPlayerUUID(UUID.fromString(config.getString("winnerPlayerUUID")));
+                if (config.contains("winnerPartyUUID"))
+                    election.setWinnerPartyUUID(UUID.fromString(config.getString("winnerPartyUUID")));
 
                 if (config.isConfigurationSection("partySeatDistribution")) {
                     Map<UUID, Integer> seatDist = new HashMap<>();
                     ConfigurationSection seatSection = config.getConfigurationSection("partySeatDistribution");
                     for (String partyUuidStr : seatSection.getKeys(false)) {
-                        try { seatDist.put(UUID.fromString(partyUuidStr), seatSection.getInt(partyUuidStr));}
-                        catch (IllegalArgumentException e) {plugin.getLogger().warning("[ElectionManager] Skipping invalid party UUID in seat distribution for " + electionFile.getName());}
+                        try {
+                            seatDist.put(UUID.fromString(partyUuidStr), seatSection.getInt(partyUuidStr));
+                        } catch (IllegalArgumentException e) {
+                            plugin.getLogger().warning("[ElectionManager] Skipping invalid party UUID in seat distribution for " + electionFile.getName());
+                        }
                     }
                     election.setPartySeatDistribution(seatDist); // Election的setter会处理clear和putAll
                 }
@@ -1290,6 +1321,7 @@ public class ElectionManager {
 
     /**
      * 保存指定选举的当前状态到磁盘文件。
+     *
      * @param election 要保存的选举对象
      */
     public void saveElectionState(Election election) {
@@ -1333,8 +1365,9 @@ public class ElectionManager {
 
         election.getWinnerPlayerUUID().ifPresent(uuid -> config.set("winnerPlayerUUID", uuid.toString()));
         election.getWinnerPartyUUID().ifPresent(uuid -> config.set("winnerPartyUUID", uuid.toString()));
-        if(!election.getWinnerPlayerUUID().isPresent()) config.set("winnerPlayerUUID", null); // Ensure null is saved if not present
-        if(!election.getWinnerPartyUUID().isPresent()) config.set("winnerPartyUUID", null);
+        if (!election.getWinnerPlayerUUID().isPresent())
+            config.set("winnerPlayerUUID", null); // Ensure null is saved if not present
+        if (!election.getWinnerPartyUUID().isPresent()) config.set("winnerPartyUUID", null);
 
 
         // 直接获取 partySeatDistribution map 来保存
@@ -1354,6 +1387,7 @@ public class ElectionManager {
 
     /**
      * 当一个选举结束后，将其数据文件从活跃文件夹移动到归档文件夹。
+     *
      * @param election 已结束的选举对象
      */
     public void archiveElection(Election election) {
@@ -1392,6 +1426,7 @@ public class ElectionManager {
 
     /**
      * 当插件启动时，为从磁盘加载的、仍在进行中的选举恢复其阶段性调度任务。
+     *
      * @param election 从磁盘加载的选举对象
      */
     private void resumeScheduledTasksForElection(Election election) {
@@ -1399,7 +1434,7 @@ public class ElectionManager {
         long currentTime = System.currentTimeMillis();
         plugin.getLogger().info("Resuming scheduled tasks for election: " + election.getElectionId() + " (Status: " + election.getStatus() + ")");
 
-        cancelScheduledPhaseTask(election.getElectionId()); // 清除任何可能残留的旧任务
+        cancelScheduledPhaseTask(election.getElectionId().toString()); // 清除任何可能残留的旧任务
 
         if (election.getStatus() == ElectionStatus.REGISTRATION) {
             if (currentTime < election.getRegistrationEndTime()) {
@@ -1411,7 +1446,7 @@ public class ElectionManager {
                         advanceElectionToVoting(election.getElectionId());
                     }
                 }.runTaskLater(plugin, Math.max(1, delayTicks));
-                scheduledPhaseTasks.put(election.getElectionId(), phaseTask);
+                scheduledPhaseTasks.put(election.getElectionId().toString(), phaseTask);
                 plugin.getLogger().info("Rescheduled task to advance election " + election.getElectionId() + " to VOTING stage in " + delayTicks + " ticks.");
             } else { // 登记时间已过，立即尝试推进
                 plugin.getLogger().info("Registration time for loaded election " + election.getElectionId() + " has passed. Advancing to voting now.");
@@ -1427,7 +1462,7 @@ public class ElectionManager {
                         finishElection(election.getElectionId());
                     }
                 }.runTaskLater(plugin, Math.max(1, delayTicks));
-                scheduledPhaseTasks.put(election.getElectionId(), phaseTask);
+                scheduledPhaseTasks.put(election.getElectionId().toString(), phaseTask);
                 plugin.getLogger().info("Rescheduled task to FINISH election " + election.getElectionId() + " in " + delayTicks + " ticks.");
             } else { // 投票时间已过，立即尝试结束
                 plugin.getLogger().info("Voting time for loaded election " + election.getElectionId() + " has passed. Finishing now.");
@@ -1439,32 +1474,34 @@ public class ElectionManager {
             if (currentTime < election.getStartTime()) {
                 long delayTicks = (election.getStartTime() - currentTime) / 50L;
                 BukkitTask phaseTask = new BukkitRunnable() {
-                    @Override public void run() {
+                    @Override
+                    public void run() {
                         scheduledPhaseTasks.remove(election.getElectionId());
                         // 当到达开始时间，通常是进入登记阶段
                         Election current = electionsById.get(election.getElectionId());
-                        if(current != null && current.getStatus() == ElectionStatus.PENDING_START){
+                        if (current != null && current.getStatus() == ElectionStatus.PENDING_START) {
                             current.setStatus(ElectionStatus.REGISTRATION);
                             saveElectionState(current);
                             // 通知等逻辑（如果需要）
                             plugin.getLogger().info("Election " + current.getElectionId() + " has now started (REGISTRATION).");
                             // 安排下一个阶段任务
                             long regDurationTicks = (current.getRegistrationEndTime() - System.currentTimeMillis()) / 50L;
-                            if(regDurationTicks > 0){
+                            if (regDurationTicks > 0) {
                                 BukkitTask regEndTask = new BukkitRunnable() {
-                                    @Override public void run() {
+                                    @Override
+                                    public void run() {
                                         scheduledPhaseTasks.remove(current.getElectionId());
                                         advanceElectionToVoting(current.getElectionId());
                                     }
                                 }.runTaskLater(plugin, regDurationTicks);
-                                scheduledPhaseTasks.put(current.getElectionId(), regEndTask);
+                                scheduledPhaseTasks.put(current.getElectionId().toString(), regEndTask);
                             } else {
                                 advanceElectionToVoting(current.getElectionId()); // 登记时间也过了
                             }
                         }
                     }
-                }.runTaskLater(plugin, Math.max(1,delayTicks));
-                scheduledPhaseTasks.put(election.getElectionId(), phaseTask);
+                }.runTaskLater(plugin, Math.max(1, delayTicks));
+                scheduledPhaseTasks.put(election.getElectionId().toString(), phaseTask);
                 plugin.getLogger().info("Rescheduled task for PENDING_START election " + election.getElectionId() + " to begin registration in " + delayTicks + " ticks.");
             } else { // 开始时间已过
                 plugin.getLogger().info("Start time for PENDING_START election " + election.getElectionId() + " has passed. Setting to REGISTRATION and advancing.");
@@ -1479,7 +1516,7 @@ public class ElectionManager {
         if (file == null || !file.exists()) return;
         File corruptedFolder = new File(activeElectionsDataFolder.getParentFile(), "corrupted_data"); // 在 elections/corrupted_data
         if (!corruptedFolder.exists()) {
-            if(!corruptedFolder.mkdirs()) {
+            if (!corruptedFolder.mkdirs()) {
                 plugin.getLogger().severe("Could not create corrupted_data folder for elections!");
                 return;
             }
@@ -1495,11 +1532,13 @@ public class ElectionManager {
 
 
     // --- Event Handlers (called by other managers or listeners) ---
+
     /**
      * 当国家政体变更时调用。
      * 会取消与该国旧政体相关的选举调度，并根据新政体重新安排。
      * 任何正在进行的、与新政体不兼容的选举将被取消。
-     * @param nation 发生政体变更的国家
+     *
+     * @param nation  发生政体变更的国家
      * @param oldType 旧政体
      * @param newType 新政体
      */
@@ -1527,7 +1566,7 @@ public class ElectionManager {
                 // 选举可以继续，但更新其政体缓存以反映最新情况（尽管选举规则应基于开始时的政体）
                 activeElection.setNationGovernmentTypeCache(newType);
                 saveElectionState(activeElection);
-                plugin.getLogger().info("Active " + activeElection.getType().getDisplayName() + " for " +nation.getName()+ " (ID: " + activeElection.getElectionId() + ") will continue under new government type: " + newType.getDisplayName() + " (rules based on start still apply).");
+                plugin.getLogger().info("Active " + activeElection.getType().getDisplayName() + " for " + nation.getName() + " (ID: " + activeElection.getElectionId() + ") will continue under new government type: " + newType.getDisplayName() + " (rules based on start still apply).");
             }
         }
 
@@ -1545,6 +1584,7 @@ public class ElectionManager {
     /**
      * 当一个Towny国家被删除时调用。
      * 会取消并删除与该国相关的所有选举数据和调度任务。
+     *
      * @param nationUUID 被删除国家的UUID
      */
     public void onNationDeleted(UUID nationUUID) {
@@ -1563,8 +1603,8 @@ public class ElectionManager {
 
         for (Election election : electionsToRemove) {
             plugin.getLogger().info("Cancelling and removing election " + election.getElectionId() + " (Type: " + election.getType() + ") due to nation deletion.");
-            cancelScheduledPhaseTask(election.getElectionId()); // 取消阶段任务
-            cancelScheduledPhaseTask(UUID.fromString(election.getElectionId() + "_archive")); // 取消归档任务
+            cancelScheduledPhaseTask(election.getElectionId().toString()); // 取消阶段任务
+            cancelScheduledPhaseTask(election.getElectionId() + "_archive"); // 取消归档任务
             electionsById.remove(election.getElectionId()); // 从内存移除
             // 删除对应的活跃选举文件
             File electionFile = new File(activeElectionsDataFolder, election.getElectionId().toString() + ELECTION_FILE_EXTENSION);
@@ -1579,6 +1619,7 @@ public class ElectionManager {
     /**
      * 当一个政党解散时调用。
      * 会从所有活跃选举中移除该党的候选人。
+     *
      * @param disbandedParty 已解散的政党对象
      */
     public void onPartyDisband(Party disbandedParty) {
@@ -1636,34 +1677,226 @@ public class ElectionManager {
      * 插件关闭时调用，用于保存数据和清理任务。
      */
     public void shutdown() {
-        plugin.getLogger().info("[ElectionManager] Shutting down...");
-        // 1. 取消所有周期性调度任务
-        for (String taskKey : new HashSet<>(scheduledCycleTasks.keySet())) { // Iterate over a copy
-            cancelScheduledCycleTask(taskKey);
-        }
-        scheduledCycleTasks.clear();
-        plugin.getLogger().info("[ElectionManager] All cycle tasks cancelled.");
-
-        // 2. 取消所有阶段性任务 (包括归档任务)
-        for (UUID electionIdKey : new HashSet<>(scheduledPhaseTasks.keySet())) {
-            // 这里的 key 可能是 electionId 或者 electionId + "_archive"
-            // cancelScheduledPhaseTask 会尝试取消两者
-            cancelScheduledPhaseTask(electionIdKey); // 这会尝试取消 electionId 和 electionId_archive
+        for (String taskKey : new HashSet<>(scheduledPhaseTasks.keySet())) { // Key 是 String
+            cancelScheduledPhaseTask(taskKey); // 现在接受 String key
         }
         scheduledPhaseTasks.clear();
-        plugin.getLogger().info("[ElectionManager] All phase tasks cancelled.");
 
         // 3. 保存所有当前活跃的选举状态
-        plugin.getLogger().info("[ElectionManager] Saving all active election states ("+ electionsById.size() +")...");
+        plugin.getLogger().info("[ElectionManager] Saving all active election states (" + electionsById.size() + ")...");
         for (Election election : electionsById.values()) {
             saveElectionState(election);
         }
         plugin.getLogger().info("[ElectionManager] ElectionManager shutdown complete.");
     }
 
-    // 需要在 Election.java 中添加以下方法来允许 ElectionManager 修改内部集合（或提供更细致的API）
-    // public Set<UUID> getVotersInternal() { return this.voters; }
-    // public Map<UUID, Integer> getPartySeatDistributionInternal() { return this.partySeatDistribution; }
-    // 这样做是为了在 loadActiveElections 时可以直接填充集合，而不是通过 addVoter/setPartySeatDistribution
-    // 这稍微破坏了 Election 的封装，但简化了加载逻辑。或者，Election 提供批量添加方法。
+    /**
+     * 获取特定上下文（如国家或政党）特定类型的最新一次已完成的选举。
+     * 首先检查内存中当前标记为 FINISHED 的选举（可能在结果公示期）。
+     * TODO: 未来可以扩展为查询已归档的选举数据文件。
+     *
+     * @param contextUUID 上下文ID (如 Nation UUID 或 Party UUID)
+     * @param type        选举类型
+     * @return 最新的已完成选举 Optional，如果找不到则为空
+     */
+    public Optional<Election> getLatestFinishedElection(UUID contextUUID, ElectionType type) {
+        if (contextUUID == null || type == null) {
+            return Optional.empty();
+        }
+
+        // 从当前内存中的 electionsById 查找符合条件的已完成选举
+        // 这些选举可能还未被完全归档（例如在结果公示期）
+        return electionsById.values().stream()
+                .filter(e -> e.getContextId().equals(contextUUID) &&
+                        e.getType() == type &&
+                        e.getStatus() == ElectionStatus.FINISHED)
+                .max(Comparator.comparingLong(Election::getEndTime)); // 按结束时间取最新的
+
+
+        // 需要在 Election.java 中添加以下方法来允许 ElectionManager 修改内部集合（或提供更细致的API）
+        // public Set<UUID> getVotersInternal() { return this.voters; }
+        // public Map<UUID, Integer> getPartySeatDistributionInternal() { return this.partySeatDistribution; }
+        // 这样做是为了在 loadActiveElections 时可以直接填充集合，而不是通过 addVoter/setPartySeatDistribution
+        // 这稍微破坏了 Election 的封装，但简化了加载逻辑。或者，Election 提供批量添加方法。
+    }
+
+    // --- 候选人与投票逻辑 ---
+
+    /**
+     * 玩家注册成为指定选举的候选人。
+     * @param player 注册的玩家
+     * @param election 目标选举
+     * @return 如果注册成功返回 true，否则返回 false (并通过 MessageManager 发送失败原因)。
+     */
+    public boolean registerCandidate(Player player, Election election) {
+        if (player == null || election == null) {
+            plugin.getLogger().warning("[ElectionManager] registerCandidate called with null player or election.");
+            return false; // 基本参数检查
+        }
+
+        // 1. 检查选举状态是否允许登记
+        if (election.getStatus() != ElectionStatus.REGISTRATION && election.getStatus() != ElectionStatus.PENDING_START) {
+            messageManager.sendMessage(player, "election-candidate-register-fail-closed");
+            return false;
+        }
+        // 如果是 PENDING_START，可以允许报名，选举开始时正式生效。
+        // 如果 election.getStatus() == ElectionStatus.PENDING_START, 实际的候选人列表可能在转为REGISTRATION时才最终确认。
+        // 为简化，我们允许在 PENDING_START 状态下就加入候选人列表，但 Election 对象内部 addCandidate 可能需要注意。
+
+        // 2. 检查玩家是否已有候选人身份
+        if (election.getCandidate(player.getUniqueId()).isPresent()) {
+            messageManager.sendMessage(player, "election-candidate-register-fail-already-registered");
+            return false;
+        }
+
+        // 3. 检查玩家参选资格 (调用内部的资格检查方法)
+        if (!isPlayerEligibleToRun(player, election)) {
+            // isPlayerEligibleToRun 方法内部应该已经发送了具体的失败消息给玩家
+            return false;
+        }
+
+        // 4. 获取玩家所属政党 (如果适用)
+        Party playerParty = partyManager.getPartyByMember(player.getUniqueId());
+        UUID partyUUID = (playerParty != null) ? playerParty.getPartyId() : null;
+
+        // 5. 根据选举类型和配置，进行特定检查 (例如，独立候选人是否允许，政党是否参选等)
+        if (election.getType() == ElectionType.PARLIAMENTARY) {
+            if (playerParty == null && !plugin.getConfig().getBoolean("elections.allow_independent_candidates.parliamentary", false)) {
+                messageManager.sendMessage(player, "election-candidate-register-fail-parliament-no-party");
+                return false;
+            }
+            // (可选) 检查政党是否声明参与此次国家选举 (如果实现了这个机制)
+            // if (playerParty != null && !isPartyParticipating(playerParty, election.getContextId())) {
+            //     messageManager.sendMessage(player, "election-candidate-register-fail-party-not-participating", "party_name", playerParty.getName());
+            //     return false;
+            // }
+        } else if (election.getType() == ElectionType.PRESIDENTIAL) {
+            if (playerParty == null && !plugin.getConfig().getBoolean("elections.allow_independent_candidates.presidential", true)) {
+                messageManager.sendMessage(player, "election-candidate-register-fail-presidential-no-party");
+                return false;
+            }
+        }
+        // 对于 PARTY_LEADER 选举，isPlayerEligibleToRun 应该已经检查了是否为党员。
+
+        // 6. 创建候选人对象并添加到选举中
+        Candidate candidate = new Candidate(player.getUniqueId(), partyUUID);
+        candidate.setPlayerNameCache(player.getName()); // 缓存当前名称
+        if (playerParty != null) {
+            candidate.setPartyNameCache(playerParty.getName()); // 缓存政党名称
+        }
+
+        if (election.addCandidate(candidate)) {
+            saveElectionState(election); // 保存选举状态的变更
+            messageManager.sendMessage(player, "election-candidate-register-success",
+                    "election_type", election.getType().getDisplayName(),
+                    "context_name", getContextName(election.getContextId(), election.getType()));
+            plugin.getLogger().info("Player " + player.getName() + " registered as candidate for " + election.getType().getDisplayName() + " in " + getContextName(election.getContextId(), election.getType()) + " (Election ID: " + election.getElectionId() + ")");
+            return true;
+        } else {
+            // addCandidate 内部可能因为 playerUUID 已存在而返回 false (虽然前面检查过了)
+            messageManager.sendMessage(player, "error-generic-party-action", "details", "无法将你添加为候选人，可能已报名。");
+            return false;
+        }
+    }
+
+    /**
+     * 玩家为指定选举中的候选人投票。
+     * @param voter 投票的玩家
+     * @param election 目标选举
+     * @param candidateToVoteFor 玩家选择投票的候选人
+     * @return 如果投票成功记录返回 true，否则返回 false (并通过 MessageManager 发送失败原因)。
+     */
+    public boolean castVote(Player voter, Election election, Candidate candidateToVoteFor) {
+        if (voter == null || election == null || candidateToVoteFor == null) {
+            plugin.getLogger().warning("[ElectionManager] castVote called with null parameters.");
+            return false;
+        }
+
+        // 1. 检查选举是否处于投票阶段
+        if (election.getStatus() != ElectionStatus.VOTING) {
+            messageManager.sendMessage(voter, "election-vote-fail-closed");
+            return false;
+        }
+
+        // 2. 检查玩家投票资格
+        if (!isPlayerEligibleToVote(voter, election)) {
+            // isPlayerEligibleToVote 方法内部会发送具体原因
+            return false;
+        }
+
+        // 3. 检查玩家是否已经投过票
+        if (election.getVoters().contains(voter.getUniqueId())) { // Election.getVoters() 返回的是副本，所以这里用 contains 没问题
+            messageManager.sendMessage(voter, "election-vote-fail-already-voted");
+            return false;
+        }
+
+        // 4. 确保候选人确实是本次选举的候选人 (防御性检查)
+        if (!election.getCandidate(candidateToVoteFor.getPlayerUUID()).isPresent()) {
+            messageManager.sendMessage(voter, "election-vote-fail-invalid-candidate");
+            return false;
+        }
+
+        // 5. 记录投票
+        if (election.recordVote(voter.getUniqueId(), candidateToVoteFor.getPlayerUUID())) {
+            saveElectionState(election); // 实时保存投票进度（如果票数很多，可以考虑批量或定时保存以优化性能）
+            messageManager.sendMessage(voter, "election-vote-success", "candidate_name", candidateToVoteFor.getResolvedPlayerName());
+            plugin.getLogger().finer("Player " + voter.getName() + " voted for " + candidateToVoteFor.getResolvedPlayerName() + " in election " + election.getElectionId());
+            return true;
+        } else {
+            // recordVote 内部可能因其他原因失败（理论上前面已检查过主要原因）
+            messageManager.sendMessage(voter, "error-generic-party-action", "details", "投票失败，未知原因。");
+            return false;
+        }
+    }
+
+    // --- (isPlayerEligibleToRun 和 isPlayerEligibleToVote 方法保持之前的实现) ---
+    private boolean isPlayerEligibleToRun(Player player, Election election) {
+        // ... (确保这里有对政党成员、国家公民等条件的检查，并发送对应消息)
+        // 例如:
+        if (election.getType() == ElectionType.PRESIDENTIAL || election.getType() == ElectionType.PARLIAMENTARY) {
+            Nation nation = TownyAPI.getInstance().getNation(election.getContextId());
+            if (nation == null) {
+                messageManager.sendMessage(player, "election-candidate-register-fail-nation-nonexistent"); // 需要新消息键
+                return false;
+            }
+            Resident resident = TownyAPI.getInstance().getResident(player.getUniqueId());
+            if (resident == null || !resident.hasNation() || !resident.getNationOrNull().equals(nation)) {
+                messageManager.sendMessage(player, "election-candidate-register-fail-not-citizen", "nation_name", nation.getName());
+                return false;
+            }
+        } else if (election.getType() == ElectionType.PARTY_LEADER) {
+            Party party = partyManager.getParty(election.getContextId());
+            if (party == null || !party.isOfficialMember(player.getUniqueId())) {
+                messageManager.sendMessage(player, "election-candidate-register-fail-not-party-member", "party_name", party != null ? party.getName() : "未知政党");
+                return false;
+            }
+        }
+        // 其他条件，例如是否有犯罪记录（如果实现）、是否已是其他选举候选人等。
+        return true;
+    }
+
+    private boolean isPlayerEligibleToVote(Player player, Election election) {
+        // ... (确保这里有对政党成员、国家公民等条件的检查，并发送对应消息)
+        // 例如:
+        if (election.getType() == ElectionType.PRESIDENTIAL || election.getType() == ElectionType.PARLIAMENTARY) {
+            Nation nation = TownyAPI.getInstance().getNation(election.getContextId());
+            if (nation == null) {
+                messageManager.sendMessage(player, "election-vote-fail-nation-nonexistent"); // 需要新消息键
+                return false;
+            }
+            Resident resident = TownyAPI.getInstance().getResident(player.getUniqueId());
+            if (resident == null || !resident.hasNation() || !resident.getNationOrNull().equals(nation)) {
+                messageManager.sendMessage(player, "election-vote-fail-not-citizen", "nation_name", nation.getName());
+                return false;
+            }
+        } else if (election.getType() == ElectionType.PARTY_LEADER) {
+            Party party = partyManager.getParty(election.getContextId());
+            if (party == null || !party.isOfficialMember(player.getUniqueId())) {
+                messageManager.sendMessage(player, "election-vote-fail-not-party-member", "party_name", party != null ? party.getName() : "未知政党");
+                return false;
+            }
+        }
+        // 其他条件，例如是否被禁止投票等。
+        return true;
+    }
 }

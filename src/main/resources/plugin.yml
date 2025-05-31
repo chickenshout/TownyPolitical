@@ -1,5 +1,5 @@
 name: TownyPolitical
-version: 0.1_Alpha # 将由 Gradle processResources 替换为项目版本
+version: 0.2_Alpha # 将由 Gradle processResources 替换为项目版本
 main: top.chickenshout.townypolitical.TownyPolitical
 api-version: 1.19 # 兼容 Paper 1.19.x
 author: chickenshout # 替换为你的名字
