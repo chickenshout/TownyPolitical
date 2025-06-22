@@ -17,6 +17,7 @@ import top.chickenshout.townypolitical.listeners.TownyHookListener;
 import top.chickenshout.townypolitical.managers.ElectionManager;
 import top.chickenshout.townypolitical.managers.NationManager;
 import top.chickenshout.townypolitical.managers.PartyManager;
+import top.chickenshout.townypolitical.managers.BillManager;
 import top.chickenshout.townypolitical.utils.MessageManager;
 
 import java.io.File;
@@ -32,6 +33,7 @@ public class TownyPolitical extends JavaPlugin {
     private PartyManager partyManager;
     private NationManager nationManager;
     private ElectionManager electionManager;
+    private BillManager billManager;
     // ParliamentManager is not included as per decision to exclude complex GUI/Bill features for now
 
     // Listeners
@@ -109,6 +111,10 @@ public class TownyPolitical extends JavaPlugin {
         this.electionManager = new ElectionManager(this); // ElectionManager's constructor now calls load and schedule
         if (this.electionManager == null) { disableCritical("Election Manager"); return; }
 
+        getLogger().info("Initializing Bill Manager..."); // <--- 新增
+        this.billManager = new BillManager(this);          // <--- 新增
+        if (this.billManager == null) { disableCritical("Bill Manager"); return; } // <--- 新增
+
 
         // 5. Register Event Listeners
         getLogger().info("Registering event listeners...");
@@ -141,7 +147,7 @@ public class TownyPolitical extends JavaPlugin {
 
     private void registerCommands() {
         PoliticalCommands politicalCommandHandler = new PoliticalCommands(this);
-        PoliticalTabCompleter politicalTabCompleter = new PoliticalTabCompleter(this);
+        PoliticalTabCompleter politicalTabCompleter = new PoliticalTabCompleter(this, politicalCommandHandler);
 
         String mainCommandName = "townypolitical";
         PluginCommand mainCommand = getCommand(mainCommandName);
@@ -179,6 +185,10 @@ public class TownyPolitical extends JavaPlugin {
             getLogger().info("Shutting down Election Manager...");
             electionManager.shutdown();
         }
+        if (billManager != null) { // <--- 新增
+            getLogger().info("Shutting down Bill Manager..."); // <--- 新增
+            billManager.shutdown(); // <--- 新增
+        } // <--- 新增
         if (partyManager != null) {
             getLogger().info("Shutting down Party Manager...");
             partyManager.shutdown();
@@ -199,6 +209,7 @@ public class TownyPolitical extends JavaPlugin {
         this.partyManager = null;
         this.nationManager = null;
         this.electionManager = null;
+        this.billManager = null; // <--- 新增
         this.townyHookListener = null;
         this.playerEventListener = null;
         getLogger().info("Managers and listeners nulled.");
@@ -260,6 +271,11 @@ public class TownyPolitical extends JavaPlugin {
         return electionManager;
     }
 
+    public BillManager getBillManager() { // <--- 新增
+        if (billManager == null) throw new IllegalStateException("BillManager is not initialized."); // <--- 新增
+        return billManager; // <--- 新增
+    } // <--- 新增
+
     /**
      * Reloads the plugin's configuration files (config.yml and messages.yml)
      * and attempts to reload data for managers.
@@ -272,6 +288,7 @@ public class TownyPolitical extends JavaPlugin {
         try {
             // 1. Shutdown existing managers to save data and cancel tasks (if they are running)
             if (electionManager != null) electionManager.shutdown(); // Cancels tasks, saves active elections
+            if (billManager != null) billManager.shutdown();
             if (partyManager != null) partyManager.saveAllParties();
             if (nationManager != null) nationManager.saveAllNationPoliticsData();
 
@@ -281,6 +298,7 @@ public class TownyPolitical extends JavaPlugin {
             // For example, party name rules in PartyManager
             if (partyManager != null) partyManager.reloadPartyConfigAndData(); // Reloads rules and all party data
             if (nationManager != null) nationManager.reloadNationConfigAndData(); // Reloads all nation politics data
+            if (billManager != null) billManager.loadBills();
 
             // 3. Reload messages.yml
             if (messageManager != null) messageManager.reloadMessages();

@@ -8,6 +8,7 @@ import top.chickenshout.townypolitical.enums.GovernmentType;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -29,6 +30,11 @@ public class Election {
     private final Map<UUID, Candidate> candidates;
     // 已投票的玩家UUID集合，防止重复投票
     private final Set<UUID> voters;
+    // 仅用于议会选举：参选的政党ID集合
+    private final Set<UUID> participatingParties;
+    // 仅用于议会选举：各政党获得的票数 <PartyUUID, AtomicInteger>
+    private final Map<UUID, AtomicInteger> partyVotesCount;
+
 
     // 结果相关
     private UUID winnerPlayerUUID;        // 总统选举或党魁选举的获胜者玩家UUID
@@ -54,6 +60,8 @@ public class Election {
         this.candidates = new ConcurrentHashMap<>(); // 保证候选人列表的并发安全
         this.voters = Collections.synchronizedSet(new HashSet<>()); // 保证投票者集合的并发安全
         this.partySeatDistribution = new ConcurrentHashMap<>(); // 保证席位分布图的并发安全
+        this.participatingParties = Collections.synchronizedSet(new HashSet<>()); // 初始化
+        this.partyVotesCount = new ConcurrentHashMap<>(); // 初始化
     }
 
     // --- Getters ---
@@ -87,6 +95,33 @@ public class Election {
 
     public long getRegistrationEndTime() {
         return registrationEndTime;
+    }
+    /**
+     * 获取参与本次议会选举的政党ID集合 (不可修改)。
+     * @return 参选政党ID集合。仅对议会选举有意义。
+     */
+    public Set<UUID> getParticipatingParties() {
+        return Collections.unmodifiableSet(new HashSet<>(participatingParties));
+    }
+
+    /**
+     * 获取指定政党在本次议会选举中获得的票数。
+     * @param partyUUID 政党ID
+     * @return 票数，如果政党未参选或未得票则为0。仅对议会选举有意义。
+     */
+    public int getVotesForParty(UUID partyUUID) {
+        AtomicInteger votes = partyVotesCount.get(partyUUID);
+        return votes != null ? votes.get() : 0;
+    }
+
+    /**
+     * 获取所有参选政党及其票数的Map (不可修改)。
+     * @return Map<PartyUUID, Integer>。仅对议会选举有意义。
+     */
+    public Map<UUID, Integer> getAllPartyVotes() {
+        Map<UUID, Integer> result = new HashMap<>();
+        partyVotesCount.forEach((partyId, count) -> result.put(partyId, count.get()));
+        return Collections.unmodifiableMap(result);
     }
 
     /**
@@ -146,6 +181,60 @@ public class Election {
     public void setRegistrationEndTime(long registrationEndTime) {
         this.registrationEndTime = registrationEndTime;
     }
+
+    /**
+     * (议会选举用) 添加一个政党到参选列表中。
+     * @param partyUUID 要添加的政党ID
+     * @return 如果成功添加返回true，如果政党已在列表中或为null则返回false。
+     */
+    public boolean addParticipatingParty(UUID partyUUID) {
+        if (partyUUID == null || this.type != ElectionType.PARLIAMENTARY) {
+            return false;
+        }
+        if (participatingParties.add(partyUUID)) {
+            partyVotesCount.putIfAbsent(partyUUID, new AtomicInteger(0)); // 初始化票数
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * (议会选举用) 移除一个参选政党。
+     * @param partyUUID 政党ID
+     * @return 如果成功移除返回true。
+     */
+    public boolean removeParticipatingParty(UUID partyUUID) {
+        if (this.type != ElectionType.PARLIAMENTARY) return false;
+        boolean removed = participatingParties.remove(partyUUID);
+        if (removed) {
+            partyVotesCount.remove(partyUUID);
+        }
+        return removed;
+    }
+
+
+    /**
+     * (议会选举用) 记录一次对政党的投票。
+     * @param voterUUID 投票者UUID
+     * @param partyUUID 目标政党UUID
+     * @return 如果投票成功记录返回true；如果投票者已投票、政党未参选或选举非投票状态，则返回false。
+     */
+    public boolean recordVoteForParty(UUID voterUUID, UUID partyUUID) {
+        if (voterUUID == null || partyUUID == null) return false;
+        if (this.type != ElectionType.PARLIAMENTARY) return false; // 仅用于议会选举
+        if (this.status != ElectionStatus.VOTING) return false;
+        if (voters.contains(voterUUID)) {
+            return false; // 已经投过票
+        }
+        if (!participatingParties.contains(partyUUID)) {
+            return false; // 政党未参选
+        }
+
+        partyVotesCount.computeIfAbsent(partyUUID, k -> new AtomicInteger(0)).incrementAndGet();
+        voters.add(voterUUID);
+        return true;
+    }
+
 
     /**
      * 添加一个候选人到选举中。
@@ -215,6 +304,9 @@ public class Election {
     public void clearVotesAndVoters() {
         this.voters.clear();
         this.candidates.values().forEach(c -> c.setVotes(0));
+        if (this.type == ElectionType.PARLIAMENTARY) { // <--- 新增
+            this.partyVotesCount.values().forEach(atomicInt -> atomicInt.set(0)); // <--- 新增
+        }
     }
 
     // --- Logic Helpers ---
@@ -265,12 +357,18 @@ public class Election {
 
     @Override
     public String toString() {
+        String extraInfo = "";
+        if (type == ElectionType.PARLIAMENTARY) {
+            extraInfo += ", participatingParties=" + participatingParties.size();
+        } else {
+            extraInfo += ", candidates=" + candidates.size();
+        }
         return "Election{" +
                 "electionId=" + electionId +
                 ", contextId=" + contextId +
                 ", type=" + type +
                 ", status=" + status +
-                ", candidates=" + candidates.size() +
+                extraInfo + // 使用 extraInfo
                 ", voters=" + voters.size() +
                 (getWinnerPlayerUUID().map(uuid -> ", winnerPlayer=" + uuid.toString().substring(0,8)).orElse("")) +
                 (getWinnerPartyUUID().map(uuid -> ", winnerParty=" + uuid.toString().substring(0,8)).orElse("")) +
@@ -293,5 +391,12 @@ public class Election {
      */
     public Map<UUID, Integer> getPartySeatDistributionInternal() { // 改为 protected 或包可见
         return this.partySeatDistribution;
+    }
+
+    public Set<UUID> getParticipatingPartiesInternal() { // 包可见或 public
+        return this.participatingParties;
+    }
+    public Map<UUID, AtomicInteger> getPartyVotesCountInternal() { // 包可见或 public
+        return this.partyVotesCount;
     }
 }

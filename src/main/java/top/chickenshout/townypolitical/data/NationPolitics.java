@@ -6,6 +6,7 @@ import top.chickenshout.townypolitical.enums.ElectionType;
 import top.chickenshout.townypolitical.enums.GovernmentType;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 存储与Towny国家相关的政治信息。
@@ -19,6 +20,10 @@ public class NationPolitics {
     private final Map<ElectionType, Long> lastElectionCompletionTimes;
     private UUID titularMonarchUUID = null; // 虚位君主的UUID (主要用于君主立宪制)
     private UUID primeMinisterUUID = null;  // 总理的UUID (主要用于半总统制、议会制、君主立宪制)
+    // 存储议会构成 <PartyUUID, List<PlayerUUID_of_MP>>
+    private final Map<UUID, List<UUID>> parliamentaryMembersByParty;
+    // 存储议会选举后各党应有的席位数 <PartyUUID, Integer (seats won)>
+    private final Map<UUID, Integer> parliamentarySeatsWonByParty;
 
     /**
      * 构造一个新的国家政治信息对象。
@@ -36,6 +41,8 @@ public class NationPolitics {
         this.lastElectionCompletionTimes = new EnumMap<>(ElectionType.class);
         this.titularMonarchUUID = null;
         this.primeMinisterUUID = null;
+        this.parliamentaryMembersByParty = new ConcurrentHashMap<>(); // 初始化
+        this.parliamentarySeatsWonByParty = new ConcurrentHashMap<>(); // 初始化
     }
 
     /**
@@ -57,6 +64,8 @@ public class NationPolitics {
         this.lastElectionCompletionTimes = new EnumMap<>(ElectionType.class);
         this.titularMonarchUUID = null;
         this.primeMinisterUUID = null;
+        this.parliamentaryMembersByParty = new ConcurrentHashMap<>(); // 初始化
+        this.parliamentarySeatsWonByParty = new ConcurrentHashMap<>(); // 初始化
     }
 
     public UUID getNationUUID() {
@@ -67,17 +76,6 @@ public class NationPolitics {
         return governmentType;
     }
 
-    /**
-     * 设置国家的新政体。
-     * @param newGovernmentType 新的政体。必须提供且不能为null。
-     * @throws IllegalArgumentException 如果 newGovernmentType 为 null。
-     */
-    public void setGovernmentType(GovernmentType newGovernmentType) {
-        if (newGovernmentType == null) {
-            throw new IllegalArgumentException("New GovernmentType cannot be null.");
-        }
-        this.governmentType = newGovernmentType;
-    }
 
     public long getLastElectionCompletionTime(ElectionType type) {
         if (type != ElectionType.PARLIAMENTARY && type != ElectionType.PRESIDENTIAL) {
@@ -139,22 +137,112 @@ public class NationPolitics {
         return Objects.hash(nationUUID);
     }
 
-    @Override
-    public String toString() {
-        return "NationPolitics{" +
-                "nationUUID=" + nationUUID +
-                ", governmentType=" + (governmentType != null ? governmentType.getDisplayName() : "null") +
-                ", lastElectionCompletionTimes=" + lastElectionCompletionTimes +
-                ", titularMonarch=" + (titularMonarchUUID != null ? titularMonarchUUID.toString().substring(0, Math.min(8, titularMonarchUUID.toString().length())) : "None") +
-                ", primeMinister=" + (primeMinisterUUID != null ? primeMinisterUUID.toString().substring(0, Math.min(8, primeMinisterUUID.toString().length())) : "None") +
-                '}';
-    }
-
     /**
      * 获取上次选举完成时间的条目集视图，供持久化等内部操作使用。
      * @return 上次选举完成时间的条目集
      */
     public Set<Map.Entry<ElectionType, Long>> getLastElectionCompletionTimesEntries() {
         return lastElectionCompletionTimes.entrySet();
+    }
+
+    // --- 新增 Getters and Setters for Parliament Composition ---
+
+    /**
+     * 获取指定政党在该国任命的议员UUID列表。
+     * 返回的是一个副本。
+     * @param partyUUID 政党ID
+     * @return 议员UUID列表，如果该政党没有任命议员则为空列表。
+     */
+    public List<UUID> getParliamentaryMembersForParty(UUID partyUUID) {
+        return new ArrayList<>(parliamentaryMembersByParty.getOrDefault(partyUUID, Collections.emptyList()));
+    }
+
+    /**
+     * 获取该国所有议会成员（所有政党）。
+     * @return 所有议员的UUID列表。
+     */
+    public List<UUID> getAllParliamentaryMembers() {
+        List<UUID> allMps = new ArrayList<>();
+        parliamentaryMembersByParty.values().forEach(allMps::addAll);
+        return Collections.unmodifiableList(allMps);
+    }
+
+    /**
+     * 设置一个政党的议员列表。会替换该政党现有的所有议员。
+     * 通常由 PartyManager 在党魁执行任命命令时调用。
+     * @param partyUUID 政党ID
+     * @param memberPlayerUUIDs 新的议员UUID列表
+     */
+    public void setParliamentaryMembersForParty(UUID partyUUID, List<UUID> memberPlayerUUIDs) {
+        if (partyUUID == null) return;
+        if (memberPlayerUUIDs == null || memberPlayerUUIDs.isEmpty()) {
+            parliamentaryMembersByParty.remove(partyUUID);
+        } else {
+            // 确保没有重复
+            parliamentaryMembersByParty.put(partyUUID, new ArrayList<>(new HashSet<>(memberPlayerUUIDs)));
+        }
+    }
+
+    /**
+     * 清除所有政党的议员任命信息。
+     * 通常在新的议会选举结束后调用。
+     */
+    public void clearAllParliamentaryMembers() {
+        parliamentaryMembersByParty.clear();
+    }
+
+    /**
+     * 获取该国议会各政党赢得的席位数。
+     * 返回的是一个副本。
+     * @return Map<PartyUUID, Integer>
+     */
+    public Map<UUID, Integer> getParliamentarySeatsWonByParty() {
+        return new ConcurrentHashMap<>(parliamentarySeatsWonByParty);
+    }
+
+    /**
+     * 设置议会选举后各政党赢得的席位数。
+     * 通常由 ElectionManager 在议会选举结束后调用。
+     * @param seatDistribution Map<PartyUUID, Integer>
+     */
+    public void setParliamentarySeatsWonByParty(Map<UUID, Integer> seatDistribution) {
+        this.parliamentarySeatsWonByParty.clear();
+        if (seatDistribution != null) {
+            this.parliamentarySeatsWonByParty.putAll(seatDistribution);
+        }
+    }
+
+    // 在 setGovernmentType 方法中，如果政体不再有议会，则清除议员信息
+    public void setGovernmentType(GovernmentType newGovernmentType) {
+        if (newGovernmentType == null) {
+            throw new IllegalArgumentException("New GovernmentType cannot be null.");
+        }
+        this.governmentType = newGovernmentType;
+        if (!newGovernmentType.hasParliament()) { // <--- 新增检查
+            clearAllParliamentaryMembers();
+            this.parliamentarySeatsWonByParty.clear();
+        }
+    }
+
+    // 在 toString 中可以加入议员数量
+    @Override
+    public String toString() {
+        int totalMps = parliamentaryMembersByParty.values().stream().mapToInt(List::size).sum();
+        return "NationPolitics{" +
+                "nationUUID=" + nationUUID +
+                ", governmentType=" + (governmentType != null ? governmentType.getDisplayName() : "null") +
+                ", lastElectionCompletionTimes=" + lastElectionCompletionTimes +
+                ", titularMonarch=" + (titularMonarchUUID != null ? titularMonarchUUID.toString().substring(0, Math.min(8, titularMonarchUUID.toString().length())) : "None") +
+                ", primeMinister=" + (primeMinisterUUID != null ? primeMinisterUUID.toString().substring(0, Math.min(8, primeMinisterUUID.toString().length())) : "None") +
+                ", totalMPs=" + totalMps + // 新增
+                '}';
+    }
+
+    // 供 NationManager 加载/保存数据使用
+    public Map<UUID, List<UUID>> getParliamentaryMembersByPartyInternal() {
+        return this.parliamentaryMembersByParty;
+    }
+    public Map<UUID, Integer> getParliamentarySeatsWonByPartyInternal() {
+        return this.parliamentarySeatsWonByParty;
     }
 }

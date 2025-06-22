@@ -3,6 +3,7 @@
 package top.chickenshout.townypolitical.managers;
 
 import com.palmergames.bukkit.towny.TownyAPI; // 正确的API导入
+import com.palmergames.bukkit.towny.object.Nation;
 import com.palmergames.bukkit.towny.object.Resident;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -11,11 +12,13 @@ import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import top.chickenshout.townypolitical.TownyPolitical;
+import top.chickenshout.townypolitical.data.NationPolitics;
 import top.chickenshout.townypolitical.data.Party;
 import top.chickenshout.townypolitical.data.PartyMember;
 import top.chickenshout.townypolitical.economy.EconomyService;
 import top.chickenshout.townypolitical.enums.PartyRole;
 import top.chickenshout.townypolitical.utils.MessageManager;
+import top.chickenshout.townypolitical.managers.NationManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -45,6 +48,10 @@ public class PartyManager {
     private Pattern validPartyNamePattern;
     private int partyNameMinLength;
     private int partyNameMaxLength;
+
+    private NationManager getNationManager() {
+        return plugin.getNationManager(); // 或者 this.plugin.getNationManager()
+    }
 
     public PartyManager(TownyPolitical plugin) {
         this.plugin = plugin;
@@ -525,6 +532,225 @@ public class PartyManager {
             messageManager.sendMessage(currentLeaderPlayer, "error-generic-party-action", "details", e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * 党魁为一个国家任命本党的议员。
+     * @param party 操作的政党
+     * @param nation 目标国家
+     * @param initiator 执行命令的党魁
+     * @param mpCandidateNames 要任命为议员的玩家名称列表
+     * @return 是否成功
+     */
+    public boolean setPartyMPsInNation(Party party, Nation nation, Player initiator, List<String> mpCandidateNames) {
+        if (party == null || nation == null || initiator == null || mpCandidateNames == null) return false;
+
+        if (!party.isLeader(initiator.getUniqueId())) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-not-leader", "party_name", party.getName()); // 新消息
+            return false;
+        }
+
+        NationPolitics nationPolitics = getNationManager().getNationPolitics(nation);
+        if (nationPolitics == null || !nationPolitics.getGovernmentType().hasParliament()) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-nation-no-parliament", "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        Map<UUID, Integer> seatsWonMap = nationPolitics.getParliamentarySeatsWonByParty();
+        int seatsPartyHas = seatsWonMap.getOrDefault(party.getPartyId(), 0);
+
+        if (seatsPartyHas == 0) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-no-seats", "party_name", party.getName(), "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        if (mpCandidateNames.size() > seatsPartyHas) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-too-many-mps", "count", String.valueOf(mpCandidateNames.size()), "seats", String.valueOf(seatsPartyHas)); // 新消息
+            return false;
+        }
+
+        List<UUID> newMpUUIDs = new ArrayList<>();
+        List<String> invalidPlayerNames = new ArrayList<>();
+        List<String> notPartyMembers = new ArrayList<>();
+        List<String> notNationCitizens = new ArrayList<>(); // 可选检查
+
+        for (String playerName : mpCandidateNames) {
+            OfflinePlayer mpPlayer = Bukkit.getOfflinePlayer(playerName); // 注意：这可能导致主线程卡顿
+            if (!mpPlayer.hasPlayedBefore() && !mpPlayer.isOnline()) {
+                invalidPlayerNames.add(playerName);
+                continue;
+            }
+            // 检查是否为本党成员
+            if (!party.isOfficialMember(mpPlayer.getUniqueId())) {
+                notPartyMembers.add(playerName);
+                continue;
+            }
+            // 可选：检查是否为该国公民
+            Resident mpResident = TownyAPI.getInstance().getResident(mpPlayer.getUniqueId());
+            boolean checkCitizenship = plugin.getConfig().getBoolean("bills.mp_must_be_citizen", true); // 新配置项
+            if (checkCitizenship && (mpResident == null || !mpResident.hasNation() || !mpResident.getNationOrNull().equals(nation))) {
+                notNationCitizens.add(playerName);
+                continue;
+            }
+            newMpUUIDs.add(mpPlayer.getUniqueId());
+        }
+
+        if (!invalidPlayerNames.isEmpty()) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-invalid-players", "players", String.join(", ", invalidPlayerNames));
+            return false;
+        }
+        if (!notPartyMembers.isEmpty()) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-not-party-members", "players", String.join(", ", notPartyMembers), "party_name", party.getName());
+            return false;
+        }
+        if (!notNationCitizens.isEmpty()) {
+            messageManager.sendMessage(initiator, "party-setmps-fail-not-citizens", "players", String.join(", ", notNationCitizens), "nation_name", nation.getName());
+            return false;
+        }
+
+        if (new HashSet<>(newMpUUIDs).size() != newMpUUIDs.size()) { // 检查是否有重复任命
+            messageManager.sendMessage(initiator, "party-setmps-fail-duplicate-mps"); // 新消息
+            return false;
+        }
+
+
+        // 更新 NationPolitics
+        nationPolitics.setParliamentaryMembersForParty(party.getPartyId(), newMpUUIDs);
+        getNationManager().saveNationPolitics(nationPolitics);
+
+        messageManager.sendMessage(initiator, "party-setmps-success", // 新消息
+                "count", String.valueOf(newMpUUIDs.size()),
+                "nation_name", nation.getName(),
+                "party_name", party.getName());
+        if (!newMpUUIDs.isEmpty()) {
+            messageManager.sendMessage(initiator, "party-setmps-list-header"); // 新消息
+            for(UUID mpId : newMpUUIDs){
+                OfflinePlayer op = Bukkit.getOfflinePlayer(mpId);
+                messageManager.sendMessage(initiator, "party-setmps-list-entry", "player_name", op.getName() != null ? op.getName() : mpId.toString().substring(0,6)); // 新消息
+            }
+        }
+        // TODO: 通知被任命/移除的议员 (如果需要)
+        return true;
+    }
+
+    /**
+     * 党魁为一个国家添加一名本党议员。
+     * @param party 操作的政党
+     * @param nation 目标国家
+     * @param initiator 执行命令的党魁
+     * @param mpCandidateName 要添加为议员的玩家名称
+     * @return 是否成功
+     */
+    public boolean addPartyMPInNation(Party party, Nation nation, Player initiator, String mpCandidateName) {
+        if (party == null || nation == null || initiator == null || mpCandidateName == null || mpCandidateName.trim().isEmpty()) return false;
+
+        if (!party.isLeader(initiator.getUniqueId())) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-not-leader", "party_name", party.getName()); // 新消息
+            return false;
+        }
+
+        NationPolitics nationPolitics = getNationManager().getNationPolitics(nation);
+        if (nationPolitics == null || !nationPolitics.getGovernmentType().hasParliament()) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-nation-no-parliament", "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        Map<UUID, Integer> seatsWonMap = nationPolitics.getParliamentarySeatsWonByParty();
+        int seatsPartyHas = seatsWonMap.getOrDefault(party.getPartyId(), 0);
+
+        if (seatsPartyHas == 0) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-no-seats", "party_name", party.getName(), "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        List<UUID> currentMps = nationPolitics.getParliamentaryMembersForParty(party.getPartyId());
+        if (currentMps.size() >= seatsPartyHas) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-all-seats-filled", "seats", String.valueOf(seatsPartyHas)); // 新消息
+            return false;
+        }
+
+        OfflinePlayer mpPlayer = Bukkit.getOfflinePlayer(mpCandidateName);
+        if (!mpPlayer.hasPlayedBefore() && !mpPlayer.isOnline()) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-player-not-found", "player", mpCandidateName); // 新消息
+            return false;
+        }
+
+        if (!party.isOfficialMember(mpPlayer.getUniqueId())) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-not-party-member", "player", mpCandidateName, "party_name", party.getName()); // 新消息
+            return false;
+        }
+
+        Resident mpResident = TownyAPI.getInstance().getResident(mpPlayer.getUniqueId());
+        boolean checkCitizenship = plugin.getConfig().getBoolean("bills.mp_must_be_citizen", true);
+        if (checkCitizenship && (mpResident == null || !mpResident.hasNation() || !mpResident.getNationOrNull().equals(nation))) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-not-citizen", "player", mpCandidateName, "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        if (currentMps.contains(mpPlayer.getUniqueId())) {
+            messageManager.sendMessage(initiator, "party-addmp-fail-already-mp", "player", mpCandidateName); // 新消息
+            return false;
+        }
+
+        currentMps.add(mpPlayer.getUniqueId());
+        nationPolitics.setParliamentaryMembersForParty(party.getPartyId(), currentMps); // setParliamentaryMembersForParty 会处理 new ArrayList
+        getNationManager().saveNationPolitics(nationPolitics);
+
+        messageManager.sendMessage(initiator, "party-addmp-success", "player", mpPlayer.getName(), "nation_name", nation.getName()); // 新消息
+        // TODO: 通知被任命的议员
+        if (mpPlayer.isOnline() && mpPlayer.getPlayer() != null) {
+            messageManager.sendMessage(mpPlayer.getPlayer(), "party-appointed-as-mp-notification", "party_name", party.getName(), "nation_name", nation.getName()); // 新消息
+        }
+        return true;
+    }
+
+    /**
+     * 党魁从一个国家移除一名本党议员。
+     * @param party 操作的政党
+     * @param nation 目标国家
+     * @param initiator 执行命令的党魁
+     * @param mpCandidateName 要移除的议员的玩家名称
+     * @return 是否成功
+     */
+    public boolean removePartyMPInNation(Party party, Nation nation, Player initiator, String mpCandidateName) {
+        if (party == null || nation == null || initiator == null || mpCandidateName == null || mpCandidateName.trim().isEmpty()) return false;
+
+        if (!party.isLeader(initiator.getUniqueId())) {
+            messageManager.sendMessage(initiator, "party-removemp-fail-not-leader", "party_name", party.getName()); // 新消息
+            return false;
+        }
+
+        NationPolitics nationPolitics = getNationManager().getNationPolitics(nation);
+        if (nationPolitics == null || !nationPolitics.getGovernmentType().hasParliament()) {
+            // 如果国家没有议会了，理论上议员列表应该已经被清空，但还是检查一下
+            messageManager.sendMessage(initiator, "party-removemp-fail-nation-no-parliament", "nation_name", nation.getName()); // 新消息
+            return false;
+        }
+
+        OfflinePlayer mpPlayer = Bukkit.getOfflinePlayer(mpCandidateName);
+        if (!mpPlayer.hasPlayedBefore() && !mpPlayer.isOnline() && nationPolitics.getParliamentaryMembersForParty(party.getPartyId()).stream().noneMatch(id -> id.equals(mpPlayer.getUniqueId()))) {
+            // 如果玩家不存在，并且他也不在当前议员列表里（通过UUID匹配，因为名字可能对不上）
+            messageManager.sendMessage(initiator, "party-removemp-fail-player-not-found-or-not-mp", "player", mpCandidateName); // 新消息
+            return false;
+        }
+
+
+        List<UUID> currentMps = nationPolitics.getParliamentaryMembersForParty(party.getPartyId());
+        boolean removed = currentMps.remove(mpPlayer.getUniqueId());
+
+        if (removed) {
+            nationPolitics.setParliamentaryMembersForParty(party.getPartyId(), currentMps);
+            getNationManager().saveNationPolitics(nationPolitics);
+            messageManager.sendMessage(initiator, "party-removemp-success", "player", mpPlayer.getName() != null ? mpPlayer.getName() : mpCandidateName, "nation_name", nation.getName()); // 新消息
+            // TODO: 通知被移除的议员
+            if (mpPlayer.isOnline() && mpPlayer.getPlayer() != null) {
+                messageManager.sendMessage(mpPlayer.getPlayer(), "party-removed-as-mp-notification", "party_name", party.getName(), "nation_name", nation.getName()); // 新消息
+            }
+            return true;
+        } else {
+            messageManager.sendMessage(initiator, "party-removemp-fail-not-an-mp", "player", mpCandidateName, "party_name", party.getName()); // 新消息
+            return false;
+        }
     }
 
 

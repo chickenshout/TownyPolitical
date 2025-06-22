@@ -1,19 +1,23 @@
+// 文件名: PartyCommandsHandler.java
+// 结构位置: top/chickenshout/townypolitical/commands/handlers/PartyCommandsHandler.java
 package top.chickenshout.townypolitical.commands.handlers;
 
+import com.palmergames.bukkit.towny.TownyAPI;
+import com.palmergames.bukkit.towny.object.Nation;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import top.chickenshout.townypolitical.TownyPolitical;
+import top.chickenshout.townypolitical.data.NationPolitics;
 import top.chickenshout.townypolitical.data.Party;
 import top.chickenshout.townypolitical.data.PartyMember;
 import top.chickenshout.townypolitical.enums.PartyRole;
+import top.chickenshout.townypolitical.managers.NationManager;
 import top.chickenshout.townypolitical.managers.PartyManager;
 import top.chickenshout.townypolitical.utils.MessageManager;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture; // For async player lookup
 import java.util.stream.Collectors;
 
@@ -22,11 +26,13 @@ public class PartyCommandsHandler {
     private final TownyPolitical plugin;
     private final MessageManager messageManager;
     private final PartyManager partyManager;
+    private final NationManager nationManager;
 
     public PartyCommandsHandler(TownyPolitical plugin) {
         this.plugin = plugin;
         this.messageManager = plugin.getMessageManager();
         this.partyManager = plugin.getPartyManager();
+        this.nationManager = plugin .getNationManager();
     }
 
     public boolean handleCommand(CommandSender sender, String commandLabel, String[] args) {
@@ -70,6 +76,14 @@ public class PartyCommandsHandler {
                 return handleRenameCommand(sender, commandLabel, subArgs);
             case "setleader":
                 return handleSetLeaderCommand(sender, commandLabel, subArgs);
+            case "setmps": // 可以保留这个作为批量设置，或改为 setallmps
+                return handleSetAllMPsCommand(sender, commandLabel, subArgs); // 调用新的处理方法名
+            case "addmp": // <--- 新增
+                return handleAddMPCommand(sender, commandLabel, subArgs);
+            case "removemp": // <--- 新增
+                return handleRemoveMPCommand(sender, commandLabel, subArgs);
+            case "listmps": // <--- 新增，用于查看议员
+                return handleListMPsCommand(sender, commandLabel, subArgs);
             default:
                 messageManager.sendMessage(sender, "command-party-unknown", "subcommand", subCommand);
                 sendPartyHelp(sender, commandLabel);
@@ -544,6 +558,157 @@ public class PartyCommandsHandler {
         return true;
     }
 
+    private boolean handleSetAllMPsCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!(sender instanceof Player)) {
+            messageManager.sendMessage(sender, "error-player-only-command");
+            return true;
+        }
+        Player player = (Player) sender;
+        if (!player.hasPermission("townypolitical.party.setmps")) { // 新权限
+            messageManager.sendMessage(player, "error-no-permission");
+            return true;
+        }
+        // 用法: /tparty setmps <国家名> [玩家1] [玩家2] ...
+        // 如果不提供玩家名，则视为清空该党在该国的议员
+        if (subArgs.length < 1) {
+            messageManager.sendMessage(player, "error-invalid-arguments", "usage", "/" + commandLabel + " setmps <国家名> [议员玩家名列表...]");
+            return true;
+        }
+        Party party = partyManager.getPartyByMember(player.getUniqueId());
+        if (party == null) {
+            messageManager.sendMessage(player, "party-command-fail-not-in-party"); // 新消息或复用
+            return true;
+        }
+        String nationName = subArgs[0];
+        Nation nation = TownyAPI.getInstance().getNation(nationName);
+        if (nation == null) {
+            messageManager.sendMessage(player, "error-nation-not-found", "nation", nationName);
+            return true;
+        }
+        List<String> mpNames = new ArrayList<>();
+        if (subArgs.length > 1) {
+            mpNames.addAll(Arrays.asList(subArgs).subList(1, subArgs.length));
+        }
+        // 如果 mpNames 为空，则表示清空
+        partyManager.setPartyMPsInNation(party, nation, player, mpNames);
+        return true;
+    }
+
+    private boolean handleAddMPCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!(sender instanceof Player)) { /* ... */ return true; }
+        Player player = (Player) sender;
+        if (!player.hasPermission("townypolitical.party.addmp")) { // 新权限
+            messageManager.sendMessage(player, "error-no-permission");
+            return true;
+        }
+        // 用法: /tparty addmp <国家名> <玩家名>
+        if (subArgs.length < 2) {
+            messageManager.sendMessage(player, "error-invalid-arguments", "usage", "/" + commandLabel + " addmp <国家名> <玩家名>");
+            return true;
+        }
+        Party party = partyManager.getPartyByMember(player.getUniqueId());
+        if (party == null) { /* ... */ return true; }
+        String nationName = subArgs[0];
+        Nation nation = TownyAPI.getInstance().getNation(nationName);
+        if (nation == null) { /* ... */ return true; }
+        String mpName = subArgs[1];
+
+        partyManager.addPartyMPInNation(party, nation, player, mpName);
+        return true;
+    }
+
+    private boolean handleRemoveMPCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!(sender instanceof Player)) { /* ... */ return true; }
+        Player player = (Player) sender;
+        if (!player.hasPermission("townypolitical.party.removemp")) { // 新权限
+            messageManager.sendMessage(player, "error-no-permission");
+            return true;
+        }
+        // 用法: /tparty removemp <国家名> <玩家名>
+        if (subArgs.length < 2) {
+            messageManager.sendMessage(player, "error-invalid-arguments", "usage", "/" + commandLabel + " removemp <国家名> <玩家名>");
+            return true;
+        }
+        Party party = partyManager.getPartyByMember(player.getUniqueId());
+        if (party == null) { /* ... */ return true; }
+        String nationName = subArgs[0];
+        Nation nation = TownyAPI.getInstance().getNation(nationName);
+        if (nation == null) { /* ... */ return true; }
+        String mpName = subArgs[1];
+
+        partyManager.removePartyMPInNation(party, nation, player, mpName);
+        return true;
+    }
+
+    private boolean handleListMPsCommand(CommandSender sender, String commandLabel, String[] subArgs) {
+        if (!sender.hasPermission("townypolitical.party.listmps")) { // 新权限
+            messageManager.sendMessage(sender, "error-no-permission");
+            return true;
+        }
+        // 用法: /tparty listmps <国家名> [政党名]
+        if (subArgs.length < 1) {
+            messageManager.sendMessage(sender, "error-invalid-arguments", "usage", "/" + commandLabel + " listmps <国家名> [政党名]");
+            return true;
+        }
+        String nationName = subArgs[0];
+        Nation nation = TownyAPI.getInstance().getNation(nationName);
+        if (nation == null) {
+            messageManager.sendMessage(sender, "error-nation-not-found", "nation", nationName);
+            return true;
+        }
+
+        NationPolitics politics = nationManager.getNationPolitics(nation);
+        if (politics == null || !politics.getGovernmentType().hasParliament()) {
+            messageManager.sendMessage(sender, "party-listmps-fail-nation-no-parliament", "nation_name", nation.getName()); // 新消息
+            return true;
+        }
+
+        Party filterParty = null;
+        if (subArgs.length > 1) {
+            String partyName = subArgs[1];
+            filterParty = partyManager.getParty(partyName);
+            if (filterParty == null) {
+                messageManager.sendMessage(sender, "error-party-not-found", "party", partyName);
+                return true;
+            }
+        }
+
+        messageManager.sendRawMessage(sender, "party-listmps-header", "nation_name", nation.getName()); // 新消息
+        Map<UUID, List<UUID>> mpsByParty = politics.getParliamentaryMembersByPartyInternal();
+
+        if (mpsByParty.isEmpty() || mpsByParty.values().stream().allMatch(List::isEmpty)) {
+            messageManager.sendRawMessage(sender, "party-listmps-none-appointed", "nation_name", nation.getName()); // 新消息
+            return true;
+        }
+
+        boolean foundAny = false;
+        for (Map.Entry<UUID, List<UUID>> entry : mpsByParty.entrySet()) {
+            Party party = partyManager.getParty(entry.getKey());
+            if (party == null) continue; // 政党数据可能已丢失
+
+            if (filterParty != null && !filterParty.getPartyId().equals(party.getPartyId())) {
+                continue; // 如果指定了政党过滤，则跳过其他政党
+            }
+
+            if (!entry.getValue().isEmpty()) {
+                foundAny = true;
+                messageManager.sendRawMessage(sender, "party-listmps-party-header", "party_name", party.getName(), "count", String.valueOf(entry.getValue().size())); // 新消息
+                for (UUID mpId : entry.getValue()) {
+                    OfflinePlayer mpPlayer = Bukkit.getOfflinePlayer(mpId);
+                    messageManager.sendRawMessage(sender, "party-listmps-entry", "player_name", mpPlayer.getName() != null ? mpPlayer.getName() : "ID:"+mpId.toString().substring(0,6)); // 新消息
+                }
+            }
+        }
+        if (!foundAny) {
+            if (filterParty != null) {
+                messageManager.sendRawMessage(sender, "party-listmps-party-none-appointed", "party_name", filterParty.getName(), "nation_name", nation.getName()); // 新消息
+            } else {
+                messageManager.sendRawMessage(sender, "party-listmps-none-appointed", "nation_name", nation.getName());
+            }
+        }
+        return true;
+    }
+
     private void sendPartyHelp(CommandSender sender, String commandLabel) {
         // (保持之前的 sendPartyHelp 方法，并根据新添加的命令和权限进行扩充)
         String displayLabel = commandLabel.split(" ")[0];
@@ -581,7 +746,14 @@ public class PartyCommandsHandler {
             messageManager.sendRawMessage(sender, "help-party-rename", "label", displayLabel);
         if (sender.hasPermission("townypolitical.party.setleader"))
             messageManager.sendRawMessage(sender, "help-party-setleader", "label", displayLabel);
-
+        if (sender.hasPermission("townypolitical.party.setmps"))
+            messageManager.sendRawMessage(sender, "help-party-setmps", "label", displayLabel);
+        if (sender.hasPermission("townypolitical.party.addmp"))
+            messageManager.sendRawMessage(sender, "help-party-addmp", "label", displayLabel); // 新消息键
+        if (sender.hasPermission("townypolitical.party.removemp"))
+            messageManager.sendRawMessage(sender, "help-party-removemp", "label", displayLabel); // 新消息键
+        if (sender.hasPermission("townypolitical.party.listmps"))
+            messageManager.sendRawMessage(sender, "help-party-listmps", "label", displayLabel); // 新消息键
         messageManager.sendRawMessage(sender, "help-footer");
     }
 }

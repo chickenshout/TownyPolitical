@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
@@ -467,6 +468,22 @@ public class ElectionManager {
             return;
         }
 
+        if (election.getType() == ElectionType.PARLIAMENTARY) { // <--- 新增分支处理
+            if (election.getParticipatingParties().isEmpty()) {
+                String contextName = getContextName(election.getContextId(), election.getType());
+                messageManager.sendMessage(Bukkit.getConsoleSender(), "election-no-parties-registered", "election_type", election.getType().getDisplayName(), "context", contextName); // 新消息
+                cancelElection(election, "没有政党报名参选");
+                return;
+            }
+        } else { // 对于总统选举和党魁选举，检查候选人
+            if (election.getCandidates().isEmpty()) {
+                String contextName = getContextName(election.getContextId(), election.getType());
+                messageManager.sendMessage(Bukkit.getConsoleSender(), "election-no-candidates", "election_type", election.getType().getDisplayName(), "context", contextName);
+                cancelElection(election, "没有候选人参与");
+                return;
+            }
+        }
+
         election.setStatus(ElectionStatus.VOTING);
         // 注意：election.setStartTime() 在这里指的是整个选举活动的开始，而不是投票阶段的开始。
         // 如果需要精确的投票阶段开始时间，可以在 Election 对象中添加一个 voteStartTime 字段。
@@ -677,6 +694,37 @@ public class ElectionManager {
         if (candidates.isEmpty() && election.getType() != ElectionType.PARLIAMENTARY) {
             election.setWinnerPlayerUUID(null); // 清除可能存在的旧获胜者
             plugin.getLogger().info("No candidates in " + election.getType() + " election: " + election.getElectionId() + ". No winner determined.");
+            // 将席位分配结果保存到 NationPolitics
+            Nation nationContextForSeats = TownyAPI.getInstance().getNation(election.getContextId());
+            if (nationContextForSeats != null) {
+                NationPolitics nationPolitics = nationManager.getNationPolitics(nationContextForSeats);
+                if (election.getPartySeatDistribution() != null && !election.getPartySeatDistribution().isEmpty()) {
+                    nationPolitics.setParliamentarySeatsWonByParty(election.getPartySeatDistribution());
+                } else { // 如果没有席位分配（例如无合格政党）
+                    nationPolitics.setParliamentarySeatsWonByParty(new HashMap<>()); // 清空或设置为空
+                }
+                nationPolitics.clearAllParliamentaryMembers(); // 清空旧的议员任命
+                nationManager.saveNationPolitics(nationPolitics);
+                plugin.getLogger().info("Parliamentary seat distribution for " + nationContextForSeats.getName() + " updated in NationPolitics. Old MP appointments cleared.");
+// 通知所有赢得席位的党派的领袖去任命议员
+                if (election.getPartySeatDistribution() != null) {
+                    election.getPartySeatDistribution().forEach((partyId, seats) -> {
+                        if (seats > 0) {
+                            Party party = partyManager.getParty(partyId);
+                            if (party != null) {
+                                party.getLeader().ifPresent(leaderMember -> {
+                                    OfflinePlayer leaderPlayer = Bukkit.getOfflinePlayer(leaderMember.getPlayerId());
+                                    if (leaderPlayer.isOnline() && leaderPlayer.getPlayer() != null) {
+                                        messageManager.sendMessage(leaderPlayer.getPlayer(), "parliament-election-appoint-mps-notification", // 新消息
+                                                "nation_name", nationContextForSeats.getName(),
+                                                "seats_won", String.valueOf(seats));
+                                    }
+                                });
+                            }
+                        }
+                    });
+                }
+            }
         } else {
             switch (election.getType()) {
                 case PRESIDENTIAL:
@@ -684,42 +732,40 @@ public class ElectionManager {
                     handleSingleWinnerElection(election, candidates);
                     break;
                 case PARLIAMENTARY:
-                    Map<UUID, Integer> partyTotalVotes = new HashMap<>();
-                    for (Candidate c : candidates) {
-                        if (c.getPartyUUID() != null) {
-                            partyTotalVotes.merge(c.getPartyUUID(), c.getVotes(), Integer::sum);
-                        }
-                    }
+                    // Map<UUID, Integer> partyTotalVotes = new HashMap<>(); // 旧的，从 Candidate 汇总
+                    // for (Candidate c : candidates) {
+                    //     if (c.getPartyUUID() != null) {
+                    //         partyTotalVotes.merge(c.getPartyUUID(), c.getVotes(), Integer::sum);
+                    //     }
+                    // }
+                    // 直接使用新的 partyVotesCount
+                    Map<UUID, Integer> partyTotalVotes = election.getAllPartyVotes(); // <--- 修改：直接从Election对象获取政党票数
 
-                    if (partyTotalVotes.isEmpty() && !candidates.isEmpty()) { // 有独立候选人但没有政党获得选票
-                        plugin.getLogger().info("Parliamentary election " + election.getElectionId() + " had candidates but no party received votes (e.g. only independents ran and config disallows them seats).");
-                        election.setWinnerPartyUUID(null);
-                        election.setPartySeatDistribution(new HashMap<>());
-                    } else if (partyTotalVotes.isEmpty() && candidates.isEmpty()) {
-                        plugin.getLogger().info("No parties or candidates received votes in parliamentary election: " + election.getElectionId());
+                    if (partyTotalVotes.isEmpty()) {
+                        plugin.getLogger().info("No parties received votes in parliamentary election: " + election.getElectionId());
                         election.setWinnerPartyUUID(null);
                         election.setPartySeatDistribution(new HashMap<>());
                     } else {
+                        // ... 后续的席位计算逻辑 (calculateSeatsLargestRemainderHare) 的输入已经是 Map<UUID, Integer>，所以这里应该能继续工作 ...
+                        // 确保 calculateSeatsLargestRemainderHare 的输入是 partyTotalVotes
+
                         int totalParliamentSeats = getConfiguredTotalParliamentSeats(election.getContextId(), govTypeForNationElection);
                         double representationThresholdPercent = plugin.getConfig().getDouble("elections.parliament.representation_threshold_percent", 0.0);
+
+                        // 计算总有效票数时，应该基于 partyTotalVotes
                         long totalVotesCastInElection = partyTotalVotes.values().stream().mapToLong(Integer::intValue).sum();
 
                         Map<UUID, Integer> eligiblePartyVotes = partyTotalVotes.entrySet().stream()
                                 .filter(entry -> {
-                                    if (totalVotesCastInElection == 0 && entry.getValue() > 0) return true; // 如果只有这个党有票
+                                    if (totalVotesCastInElection == 0 && entry.getValue() > 0) return true;
                                     if (totalVotesCastInElection == 0) return false;
                                     double percentage = (double) entry.getValue() * 100.0 / totalVotesCastInElection;
                                     return percentage >= representationThresholdPercent;
                                 })
                                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-                        if (eligiblePartyVotes.isEmpty() && !partyTotalVotes.isEmpty()) {
-                            plugin.getLogger().info("No parties met the representation threshold of " + representationThresholdPercent + "% in parliamentary election: " + election.getElectionId());
-                            election.setWinnerPartyUUID(null);
-                            election.setPartySeatDistribution(new HashMap<>());
-                        } else if (eligiblePartyVotes.isEmpty() && partyTotalVotes.isEmpty()) {
-                            // This case should be caught by partyTotalVotes.isEmpty() above
-                            plugin.getLogger().info("No eligible parties and no total votes in parliamentary election: " + election.getElectionId());
+                        if (eligiblePartyVotes.isEmpty()) { // 修改这里的判断条件
+                            plugin.getLogger().info("No parties met the representation threshold or no votes were cast in parliamentary election: " + election.getElectionId());
                             election.setWinnerPartyUUID(null);
                             election.setPartySeatDistribution(new HashMap<>());
                         } else {
@@ -727,7 +773,7 @@ public class ElectionManager {
                             election.setPartySeatDistribution(seatDistribution);
 
                             UUID majorityPartyUUID = seatDistribution.entrySet().stream()
-                                    .filter(entry -> entry.getValue() > 0) // 必须获得至少一个席位
+                                    .filter(entry -> entry.getValue() > 0)
                                     .max(Map.Entry.comparingByValue())
                                     .map(Map.Entry::getKey)
                                     .orElse(null);
@@ -738,7 +784,7 @@ public class ElectionManager {
                                 String partyName = p != null ? p.getName() : "ID: " + majorityPartyUUID.toString().substring(0, 6);
                                 plugin.getLogger().info("Majority party in " + getContextName(election.getContextId(), election.getType()) + " is " + partyName + " with " + seatDistribution.get(majorityPartyUUID) + " seats.");
                             } else {
-                                plugin.getLogger().info("No majority party determined (no party won seats or tie for zero seats) in " + getContextName(election.getContextId(), election.getType()) + " parliamentary election.");
+                                plugin.getLogger().info("No majority party determined in " + getContextName(election.getContextId(), election.getType()) + " parliamentary election.");
                             }
                         }
                     }
@@ -748,6 +794,49 @@ public class ElectionManager {
         // 这两个方法依赖选举结果的计算，所以放在 determineElectionResults 的末尾
         updateLastCompletionTime(election); // 更新完成时间戳 (如果选举是FINISHED)
         applyElectionResultsToTowny(election); // 应用结果到Towny（如设置国王）
+    }
+
+    /**
+     * 玩家为议会选举中的政党投票。
+     * @param voter 投票的玩家
+     * @param election 目标议会选举
+     * @param partyToVoteFor 玩家选择投票的政党
+     * @return 如果投票成功记录返回 true。
+     */
+    public boolean castVoteForParty(Player voter, Election election, Party partyToVoteFor) {
+        if (voter == null || election == null || partyToVoteFor == null) {
+            plugin.getLogger().warning("[ElectionManager] castVoteForParty called with null parameters.");
+            return false;
+        }
+        if (election.getType() != ElectionType.PARLIAMENTARY) {
+            messageManager.sendMessage(voter, "election-vote-fail-not-parliamentary"); // 新消息
+            return false;
+        }
+        if (election.getStatus() != ElectionStatus.VOTING) {
+            messageManager.sendMessage(voter, "election-vote-fail-closed");
+            return false;
+        }
+        if (!isPlayerEligibleToVote(voter, election)) { // isPlayerEligibleToVote 内部会发消息
+            return false;
+        }
+        if (election.getVoters().contains(voter.getUniqueId())) {
+            messageManager.sendMessage(voter, "election-vote-fail-already-voted");
+            return false;
+        }
+        if (!election.getParticipatingParties().contains(partyToVoteFor.getPartyId())) {
+            messageManager.sendMessage(voter, "election-vote-fail-party-not-participating", "party_name", partyToVoteFor.getName()); // 新消息
+            return false;
+        }
+
+        if (election.recordVoteForParty(voter.getUniqueId(), partyToVoteFor.getPartyId())) {
+            saveElectionState(election); // 实时保存
+            messageManager.sendMessage(voter, "election-vote-success-party", "party_name", partyToVoteFor.getName()); // 新消息
+            plugin.getLogger().finer("Player " + voter.getName() + " voted for party " + partyToVoteFor.getName() + " in election " + election.getElectionId());
+            return true;
+        } else {
+            messageManager.sendMessage(voter, "error-generic-party-action", "details", "投票失败，未知原因。");
+            return false;
+        }
     }
 
     private void handleSingleWinnerElection(Election election, List<Candidate> sortedCandidates) {
@@ -1297,6 +1386,7 @@ public class ElectionManager {
                     }
                     election.setPartySeatDistribution(seatDist); // Election的setter会处理clear和putAll
                 }
+                if (type == ElectionType.PARLIAMENTARY) { if (config.isList("participatingParties")) { config.getStringList("participatingParties").forEach(partyUuidStr -> { try { election.getParticipatingPartiesInternal().add(UUID.fromString(partyUuidStr));  } catch (IllegalArgumentException e) { /* log */ } }); } if (config.isConfigurationSection("partyVotesCount")) { ConfigurationSection partyVotesSection = config.getConfigurationSection("partyVotesCount"); for (String partyUuidStr : partyVotesSection.getKeys(false)) { try { UUID partyUUID = UUID.fromString(partyUuidStr); int votes = partyVotesSection.getInt(partyUuidStr); election.getPartyVotesCountInternal().put(partyUUID, new AtomicInteger(votes));} catch (IllegalArgumentException e) { /* log */ } } } }
 
                 // 如果选举已经结束或取消，则归档并跳过添加到 activeElections
                 if (election.getStatus() == ElectionStatus.FINISHED || election.getStatus() == ElectionStatus.CANCELLED) {
@@ -1360,6 +1450,16 @@ public class ElectionManager {
         // 直接获取 voters set 来保存，因为 Election.getVoters() 返回的是副本
         if (!election.getVotersInternal().isEmpty()) { // 需要 Election.getVotersInternal()
             config.set("voters", election.getVotersInternal().stream().map(UUID::toString).collect(Collectors.toList()));
+        }
+
+        if (election.getType() == ElectionType.PARLIAMENTARY) {
+            if (!election.getParticipatingPartiesInternal().isEmpty()) {
+                // 使用 internal getter
+                config.set("participatingParties", election.getParticipatingPartiesInternal().stream().map(UUID::toString).collect(Collectors.toList()));
+            } if (election.getPartyVotesCountInternal() != null && !election.getPartyVotesCountInternal().isEmpty()) {
+                // 使用 internal getter
+                ConfigurationSection partyVotesSection = config.createSection("partyVotesCount"); election.getPartyVotesCountInternal().forEach((partyUUID, count) -> partyVotesSection.set(partyUUID.toString(), count.get()));
+            }
         }
 
 
@@ -1795,6 +1895,41 @@ public class ElectionManager {
         } else {
             // addCandidate 内部可能因为 playerUUID 已存在而返回 false (虽然前面检查过了)
             messageManager.sendMessage(player, "error-generic-party-action", "details", "无法将你添加为候选人，可能已报名。");
+            return false;
+        }
+    }
+
+    /**
+     * 政党注册参与指定国家的议会选举。
+     * @param party 目标政党
+     * @param nation 目标国家
+     * @param election 目标议会选举对象
+     * @param initiator 操作的发起者 (通常是党魁)
+     * @return 如果注册成功返回 true。
+     */
+    public boolean registerPartyForParliamentaryElection(Party party, Nation nation, Election election, Player initiator) {
+        if (party == null || nation == null || election == null || initiator == null) return false;
+        if (election.getType() != ElectionType.PARLIAMENTARY || !election.getContextId().equals(nation.getUUID())) {
+            messageManager.sendMessage(initiator, "election-parliament-register-fail-wrong-election"); // 新消息
+            return false;
+        }
+        if (election.getStatus() != ElectionStatus.REGISTRATION && election.getStatus() != ElectionStatus.PENDING_START) {
+            messageManager.sendMessage(initiator, "election-parliament-register-fail-closed"); // 新消息
+            return false;
+        }
+        if (!party.isLeader(initiator.getUniqueId())) {
+            messageManager.sendMessage(initiator, "election-parliament-register-fail-not-leader", "party_name", party.getName()); // 新消息
+            return false;
+        }
+        // 可以在此添加其他资格检查，例如政党是否活跃，是否有足够成员等。
+
+        if (election.addParticipatingParty(party.getPartyId())) {
+            saveElectionState(election);
+            messageManager.sendMessage(initiator, "election-parliament-register-success", "party_name", party.getName(), "nation_name", nation.getName()); // 新消息
+            plugin.getLogger().info("Party " + party.getName() + " registered for parliamentary election in " + nation.getName() + " (Election ID: " + election.getElectionId() + ")");
+            return true;
+        } else {
+            messageManager.sendMessage(initiator, "election-parliament-register-fail-already-registered", "party_name", party.getName()); // 新消息
             return false;
         }
     }

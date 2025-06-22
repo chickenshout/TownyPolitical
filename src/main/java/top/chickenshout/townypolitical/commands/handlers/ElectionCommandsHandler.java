@@ -289,11 +289,30 @@ public class ElectionCommandsHandler {
         }
 
         Election election = parsed.election;
-        Collection<Candidate> candidates = election.getCandidates();
-
-        if (candidates.isEmpty()) {
-            messageManager.sendMessage(sender, "election-candidates-none", "context", parsed.contextName, "type", election.getType().getDisplayName());
-            return true;
+        Collection<Candidate> candidates = null;
+        if (election.getType() == ElectionType.PARLIAMENTARY) {
+            Set<UUID> participatingPartyIds = election.getParticipatingParties();
+            if (participatingPartyIds.isEmpty()) {
+                messageManager.sendMessage(sender, "election-parties-none", "context", parsed.contextName); // 新消息
+                return true;
+            }
+            messageManager.sendRawMessage(sender, "election-parties-header", "type", election.getType().getDisplayName(), "context", parsed.contextName); // 新消息
+            for (UUID partyId : participatingPartyIds) {
+                Party party = partyManager.getParty(partyId);
+                String partyName = (party != null) ? party.getName() : "未知政党 (ID: " + partyId.toString().substring(0, 6) + ")";
+                int votes = election.getVotesForParty(partyId);
+                if (election.getStatus() == ElectionStatus.VOTING || election.getStatus() == ElectionStatus.FINISHED || election.getStatus() == ElectionStatus.AWAITING_TIE_RESOLUTION) {
+                    messageManager.sendRawMessage(sender, "election-parties-entry-with-votes", "party_name", partyName, "votes_count", String.valueOf(votes)); // 新消息
+                } else {
+                    messageManager.sendRawMessage(sender, "election-parties-entry-no-votes", "party_name", partyName); // 新消息
+                }
+            }
+        } else { // 总统或党魁选举，沿用旧的候选人列表逻辑
+            candidates = election.getCandidates();
+            if (candidates.isEmpty()) {
+                messageManager.sendMessage(sender, "election-candidates-none", "context", parsed.contextName, "type", election.getType().getDisplayName());
+                return true;
+            }
         }
 
         messageManager.sendRawMessage(sender, "election-candidates-header", "type", election.getType().getDisplayName(), "context", parsed.contextName);
@@ -301,8 +320,10 @@ public class ElectionCommandsHandler {
             String partyNameStr = "";
             if (candidate.getPartyUUID() != null) {
                 Party party = partyManager.getParty(candidate.getPartyUUID());
-                if (party != null) partyNameStr = " (" + (candidate.getPartyNameCache() != null ? candidate.getPartyNameCache() : party.getName()) + ")";
-                else if (candidate.getPartyNameCache() != null) partyNameStr = " (" + candidate.getPartyNameCache() + ")";
+                if (party != null)
+                    partyNameStr = " (" + (candidate.getPartyNameCache() != null ? candidate.getPartyNameCache() : party.getName()) + ")";
+                else if (candidate.getPartyNameCache() != null)
+                    partyNameStr = " (" + candidate.getPartyNameCache() + ")";
                 else partyNameStr = " (未知政党)";
             }
 
@@ -332,6 +353,10 @@ public class ElectionCommandsHandler {
             return true;
         }
 
+        // 更改：解析参数，如果是议会选举，则期望党魁代表政党报名
+        // 用法: /tp e register [parliamentary] [国家名]
+        // 用法: /tp e register [presidential|partyleader] [上下文]
+
         ParsedElectionContext parsed = parseElectionContext(player, subArgs, null);
         if (parsed == null || parsed.election == null) {
             if (parsed == null && subArgs.length > 0) { /* Message already sent by parseElectionContext */ }
@@ -339,15 +364,25 @@ public class ElectionCommandsHandler {
             return true;
         }
         Election election = parsed.election;
-
-        // 允许在 PENDING_START 或 REGISTRATION 状态报名
         if (election.getStatus() != ElectionStatus.REGISTRATION && election.getStatus() != ElectionStatus.PENDING_START) {
-            messageManager.sendMessage(player, "election-candidate-register-fail-closed");
+            messageManager.sendMessage(player, "election-candidate-register-fail-closed"); // 可以保留这个通用消息
             return true;
         }
-
-        // 调用 ElectionManager 中的核心逻辑
-        electionManager.registerCandidate(player, election);
+        if (election.getType() == ElectionType.PARLIAMENTARY) {
+            Party playerParty = partyManager.getPartyByMember(player.getUniqueId());
+            if (playerParty == null) {
+                messageManager.sendMessage(player, "election-parliament-register-fail-no-party"); // 新消息
+                return true;
+            }
+            Nation electionNation = TownyAPI.getInstance().getNation(election.getContextId());
+            if (electionNation == null) { // 理论上不会发生，因为选举已创建
+                messageManager.sendMessage(player, "error-generic");
+                return true;
+            }
+            electionManager.registerPartyForParliamentaryElection(playerParty, electionNation, election, player);
+        } else { // 总统或党魁选举，使用旧的候选人报名逻辑
+            electionManager.registerCandidate(player, election);
+        }
         return true;
     }
 
@@ -378,24 +413,27 @@ public class ElectionCommandsHandler {
             return true;
         }
         Election election = parsed.election;
-
         if (election.getStatus() != ElectionStatus.VOTING) {
             messageManager.sendMessage(voter, "election-vote-fail-closed");
             return true;
         }
-
-        // 查找候选人时忽略大小写
-        Optional<Candidate> targetCandidateOpt = election.getCandidates().stream()
-                .filter(c -> c.getResolvedPlayerName().equalsIgnoreCase(candidateNameArg))
-                .findFirst();
-
-        if (targetCandidateOpt.isEmpty()) {
-            messageManager.sendMessage(voter, "election-vote-fail-candidate-not-found", "candidate_name", candidateNameArg);
-            return true;
+        if (election.getType() == ElectionType.PARLIAMENTARY) {
+            Party partyToVoteFor = partyManager.getParty(candidateNameArg);
+            if (partyToVoteFor == null) {
+                messageManager.sendMessage(voter, "election-vote-fail-party-not-found", "party_name", candidateNameArg); // 新消息
+                return true;
+            }
+            electionManager.castVoteForParty(voter, election, partyToVoteFor);
+        } else { // 总统或党魁选举
+            Optional<Candidate> targetCandidateOpt = election.getCandidates().stream()
+                    .filter(c -> c.getResolvedPlayerName().equalsIgnoreCase(candidateNameArg))
+                    .findFirst();
+            if (targetCandidateOpt.isEmpty()) {
+                messageManager.sendMessage(voter, "election-vote-fail-candidate-not-found", "candidate_name", candidateNameArg);
+                return true;
+            }
+            electionManager.castVote(voter, election, targetCandidateOpt.get());
         }
-
-        // 调用 ElectionManager 中的核心逻辑
-        electionManager.castVote(voter, election, targetCandidateOpt.get());
         return true;
     }
 
@@ -627,5 +665,76 @@ public class ElectionCommandsHandler {
             messageManager.sendRawMessage(sender, "help-election-admin-stop", "label", displayLabel);
         }
         messageManager.sendRawMessage(sender, "help-footer");
+    }
+
+    @Nullable
+    public Election getTargetElectionForTabCompletion(CommandSender sender, String[] contextArgs, @Nullable ElectionType preferredType) {
+        // 这是一个简化版的 parseElectionContext，不发送消息，只返回 Election 对象
+        UUID contextId = null;
+        ElectionType determinedType = preferredType;
+        int nextArgIndex = 0;
+
+        if (contextArgs.length > nextArgIndex) {
+            Optional<ElectionType> typeOpt = ElectionType.fromString(contextArgs[nextArgIndex].toUpperCase());
+            if (typeOpt.isPresent()) {
+                determinedType = typeOpt.get();
+                nextArgIndex++;
+            }
+        }
+
+        if (contextArgs.length > nextArgIndex) {
+            String nameArg = String.join(" ", Arrays.copyOfRange(contextArgs, nextArgIndex, contextArgs.length));
+            Nation nation = TownyAPI.getInstance().getNation(nameArg);
+            if (nation != null) {
+                contextId = nation.getUUID();
+                if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL; // 默认
+            } else {
+                Party party = partyManager.getParty(nameArg);
+                if (party != null) {
+                    contextId = party.getPartyId();
+                    if (determinedType == null || determinedType != ElectionType.PARTY_LEADER) {
+                        return null; // 类型不匹配
+                    }
+                    determinedType = ElectionType.PARTY_LEADER;
+                } else {
+                    return null; // 上下文未找到
+                }
+            }
+        } else if (sender instanceof Player) {
+            Player player = (Player) sender;
+            Resident resident = TownyAPI.getInstance().getResident(player.getUniqueId());
+            if (resident != null) {
+                if (determinedType == null || determinedType == ElectionType.PRESIDENTIAL || determinedType == ElectionType.PARLIAMENTARY) {
+                    if (resident.hasNation()) {
+                        try {
+                            Nation playerNation = resident.getNation();
+                            contextId = playerNation.getUUID();
+                            if (determinedType == null) determinedType = ElectionType.PRESIDENTIAL; // 默认
+                        } catch (TownyException e) { return null; }
+                    }
+                }
+                if (contextId == null && (determinedType == null || determinedType == ElectionType.PARTY_LEADER)) {
+                    Party playerParty = partyManager.getPartyByMember(player.getUniqueId());
+                    if (playerParty != null) {
+                        contextId = playerParty.getPartyId();
+                        determinedType = ElectionType.PARTY_LEADER;
+                    } else if (determinedType == ElectionType.PARTY_LEADER) {
+                        return null;
+                    }
+                }
+                if (contextId == null) {
+                    return null;
+                }
+            } else {
+                return null;
+            }
+        } else { // 控制台且未提供上下文
+            return null;
+        }
+
+        if (contextId == null || determinedType == null) {
+            return null;
+        }
+        return electionManager.getActiveElection(contextId, determinedType);
     }
 }

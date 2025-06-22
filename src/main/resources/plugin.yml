@@ -1,5 +1,5 @@
 name: TownyPolitical
-version: 0.2_Alpha # 将由 Gradle processResources 替换为项目版本
+version: 0.3_Alpha # 将由 Gradle processResources 替换为项目版本
 main: top.chickenshout.townypolitical.TownyPolitical
 api-version: 1.19 # 兼容 Paper 1.19.x
 author: chickenshout # 替换为你的名字
@@ -106,6 +106,18 @@ permissions:
   townypolitical.party.setleader: # Transfer leadership
     description: Allows party leaders to transfer leadership of their party.
     default: true
+  townypolitical.party.setmps: # <--- 新增
+    description: Allows party leaders to set their party's MPs in a nation's parliament. # <--- 新增
+    default: true # 逻辑会检查是否为领袖 # <--- 新增
+  townypolitical.party.addmp: # <--- 新增
+    description: Allows party leaders to add an MP for their party in a nation.
+    default: true
+  townypolitical.party.removemp: # <--- 新增
+    description: Allows party leaders to remove an MP of their party in a nation.
+    default: true
+  townypolitical.party.listmps: # <--- 新增
+    description: Allows players to list MPs in a nation's parliament.
+    default: true
 
   # --- Nation & Government Permissions ---
   townypolitical.nation.setgovernment:
@@ -138,22 +150,23 @@ permissions:
     description: Allows administrators to manage elections.
     default: op
 
-  # --- Bill Permissions (Removed, but kept as placeholder if re-added) ---
-  # townypolitical.bill.propose:
-  #   description: Allows eligible players/parties to propose bills.
-  #   default: true
-  # townypolitical.bill.propose.othernation:
-  #   description: Allows proposing bills in nations the player is not a citizen of.
-  #   default: op
-  # townypolitical.bill.list:
-  #   description: Allows players to list bills.
-  #   default: true
-  # townypolitical.bill.info:
-  #   description: Allows players to view bill details.
-  #   default: true
-  # townypolitical.bill.vote:
-  #   description: Allows eligible players/MPs to vote on bills.
-  #   default: true
-  # townypolitical.bill.manage:
-  #   description: Allows admins or parliament speakers to manage bill lifecycle.
-  #   default: op
+  # --- Bill Permissions ---
+  townypolitical.bill.base: # 基础法案命令权限
+    description: Allows access to basic bill commands.
+    default: true
+    children:
+      townypolitical.bill.list: true
+      townypolitical.bill.info: true
+
+  townypolitical.bill.propose:
+    description: Allows eligible players/leaders to propose bills.
+    default: true # 实际能否提案由 BillManager 中的逻辑决定
+  townypolitical.bill.list:
+    description: Allows players to list bills.
+    default: true
+  townypolitical.bill.info:
+    description: Allows players to view bill details.
+    default: true
+  townypolitical.bill.vote:
+    description: Allows eligible players/MPs to vote on bills.
+    default: true # 实际能否投票由 BillManager 中的逻辑决定

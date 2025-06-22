@@ -126,6 +126,26 @@ elections:
   #   "ADMIN_DECIDES": (未完全实现) 选举状态将变为 AWAITING_TIE_RESOLUTION，并通知管理员，等待管理员通过命令指定获胜者。
   tie_breaking_method: "RANDOM"
 
+# 法案 (Bill) 相关配置
+bills:
+  mp_must_be_citizen: true
+  max_title_length: 100
+  max_content_length: 1000
+  parliament_vote_duration_seconds: 86400
+  list_items_per_page: 7
+  # 新增：当无法从选举结果中确定明确的议员时，是否允许所有国家公民对法案投票
+  parliament_vote_fallback_all_citizens: true
+  # 新增：议会法案通过门槛配置
+  parliament_pass_threshold:
+    # 可选类型:
+    #   SIMPLE_MAJORITY_OF_VOTES_CAST: 赞成票数 > 反对票数 (忽略弃权)
+    #   ABSOLUTE_MAJORITY_OF_VOTES_CAST: 赞成票数 > (反对票数 + 弃权票数)
+    #   MAJORITY_OF_TOTAL_MPS: 赞成票数达到总议员数的特定百分比
+    type: "SIMPLE_MAJORITY_OF_VOTES_CAST"
+    # 仅当 type 为 MAJORITY_OF_TOTAL_MPS 时有效，表示赞成票至少需要达到总议员数的这个百分比
+    # 例如 50.1 表示过半数赞成。
+    required_percentage_of_total_mps: 50.1
+
 # GUI 相关配置 (由于决定暂时不做GUI，此部分可以注释掉或留空，但保留结构以备未来)
 gui:
 # 议会席位图表中代表不同党派的色块材料 (Minecraft Material 名称)

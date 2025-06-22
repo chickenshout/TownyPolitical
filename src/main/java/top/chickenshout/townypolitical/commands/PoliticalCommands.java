@@ -10,6 +10,7 @@ import top.chickenshout.townypolitical.TownyPolitical;
 import top.chickenshout.townypolitical.commands.handlers.ElectionCommandsHandler;
 import top.chickenshout.townypolitical.commands.handlers.NationCommandsHandler;
 import top.chickenshout.townypolitical.commands.handlers.PartyCommandsHandler;
+import top.chickenshout.townypolitical.commands.handlers.BillCommandsHandler;
 // BillCommandsHandler 已移除
 import top.chickenshout.townypolitical.utils.MessageManager;
 
@@ -29,7 +30,9 @@ public class PoliticalCommands implements CommandExecutor {
     private final PartyCommandsHandler partyCommandsHandler;
     private final NationCommandsHandler nationCommandsHandler;
     private final ElectionCommandsHandler electionCommandsHandler;
-    // private final BillCommandsHandler billCommandsHandler; // 已移除
+    private final BillCommandsHandler billCommandsHandler;
+
+    private final ElectionCommandsHandler electionCommandsHandlerInstance;
 
     public PoliticalCommands(TownyPolitical plugin) {
         this.plugin = plugin;
@@ -39,7 +42,8 @@ public class PoliticalCommands implements CommandExecutor {
         this.partyCommandsHandler = new PartyCommandsHandler(plugin);
         this.nationCommandsHandler = new NationCommandsHandler(plugin);
         this.electionCommandsHandler = new ElectionCommandsHandler(plugin);
-        // this.billCommandsHandler = new BillCommandsHandler(plugin); // 已移除
+        this.billCommandsHandler = new BillCommandsHandler(plugin);
+        this.electionCommandsHandlerInstance = new ElectionCommandsHandler(plugin);
     }
 
     @Override
@@ -62,9 +66,9 @@ public class PoliticalCommands implements CommandExecutor {
                 case "nation": case "n":
                     return nationCommandsHandler.handleCommand(sender, label + " " + mainGroup, subCommandArgs);
                 case "election": case "e":
-                    return electionCommandsHandler.handle(sender, label + " " + mainGroup, subCommandArgs);
-                // case "bill": case "b": // 已移除
-                //     return billCommandsHandler.handle(sender, label + " " + mainGroup, subCommandArgs);
+                    return electionCommandsHandlerInstance.handle(sender, label + " " + mainGroup, subCommandArgs);
+                case "bill": case "b":
+                    return billCommandsHandler.handleCommand(sender, label + " " + mainGroup, subCommandArgs);
                 case "reload":
                     if (sender.hasPermission("townypolitical.command.reload")) {
                         if (plugin.reloadPlugin()) {
@@ -126,7 +130,8 @@ public class PoliticalCommands implements CommandExecutor {
             messageManager.sendRawMessage(sender, "help-group-nation", "label", label);
         if (sender.hasPermission("townypolitical.election.info") || sender.hasPermission("townypolitical.admin")) // 使用一个通用的 election info 权限
             messageManager.sendRawMessage(sender, "help-group-election", "label", label);
-        // Bill group removed
+        if (sender.hasPermission("townypolitical.bill.list") || sender.hasPermission("townypolitical.admin")) // <--- 新增 (使用 bill.list 权限作为基础)
+            messageManager.sendRawMessage(sender, "help-group-bill", "label", label); // <--- 新增 (需要 messages.yml 中有 help-group-bill)
 
         if (sender.hasPermission("townypolitical.command.reload")) {
             messageManager.sendRawMessage(sender, "help-command-reload", "label", label);
@@ -145,5 +150,9 @@ public class PoliticalCommands implements CommandExecutor {
         List<String> authors = plugin.getDescription().getAuthors();
         messageManager.sendRawMessage(sender, "plugin-info-author", "author", authors != null && !authors.isEmpty() ? String.join(", ", authors) : "N/A");
         messageManager.sendRawMessage(sender, "plugin-info-description", "description", plugin.getDescription().getDescription() != null ? plugin.getDescription().getDescription() : "N/A");
+    }
+
+    public ElectionCommandsHandler getElectionCommandsHandler() {
+        return electionCommandsHandlerInstance;
     }
 }

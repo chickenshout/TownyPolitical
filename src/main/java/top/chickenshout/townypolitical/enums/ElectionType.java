@@ -34,7 +34,7 @@ public enum ElectionType {
     }
 
     /**
-     * 根据名称（可以是显示名称、枚举名如 "PARLIAMENTARY"、或小写的 "parliament"）查找选举类型。
+     * 根据名称（可以是显示名称、枚举名如 "PARLIAMENTARY"、或小写的 "parliamentary"）查找选举类型。
      * 查找顺序: 精确枚举名 (忽略大小写) -> 显示名称 (忽略大小写)。
      * @param name 名称字符串
      * @return 对应的 ElectionType Optional，如果找不到则为空

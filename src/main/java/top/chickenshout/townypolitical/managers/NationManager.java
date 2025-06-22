@@ -26,12 +26,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
 // List, ArrayList, Optional, HashMap, Collectors, ConcurrentHashMap, Level 已在 PartyManager 中确认导入
 // 这里根据实际使用再确认
 
@@ -224,6 +222,31 @@ public class NationManager {
                     try { politics.setPrimeMinisterUUID(UUID.fromString(nationConfig.getString("primeMinisterUUID"))); } catch (IllegalArgumentException e) {  plugin.getLogger().warning("Skipping invalid primeMinisterUUID for nation " + nationUUID + " from file " + nationFile.getName());}
                 }
 
+                if (nationConfig.isConfigurationSection("parliamentarySeatsWon")) { // 旧的席位分配结果
+                    ConfigurationSection seatsWonSection = nationConfig.getConfigurationSection("parliamentarySeatsWon");
+                    Map<UUID, Integer> seatsWon = new HashMap<>();
+                    for (String partyUuidStr : seatsWonSection.getKeys(false)) {
+                        try {
+                            seatsWon.put(UUID.fromString(partyUuidStr), seatsWonSection.getInt(partyUuidStr));
+                        } catch (IllegalArgumentException e) { /* log */ }
+                    }
+                    politics.setParliamentarySeatsWonByParty(seatsWon);
+                }
+                if (nationConfig.isConfigurationSection("parliamentaryMembers")) { // 任命的议员
+                    ConfigurationSection membersSection = nationConfig.getConfigurationSection("parliamentaryMembers");
+                    for (String partyUuidStr : membersSection.getKeys(false)) {
+                        try {
+                            UUID partyUUID = UUID.fromString(partyUuidStr);
+                            List<UUID> mpList = membersSection.getStringList(partyUuidStr).stream()
+                                    .map(UUID::fromString)
+                                    .collect(Collectors.toList());
+                            politics.getParliamentaryMembersByPartyInternal().put(partyUUID, mpList); // 直接放入
+                        } catch (IllegalArgumentException e) {
+                            plugin.getLogger().warning("Skipping invalid parliamentary member entry for party " + partyUuidStr + " in nation " + nationUUID + " from file " + nationFile.getName());
+                        }
+                    }
+                }
+
                 nationPoliticsMap.put(nationUUID, politics);
             } catch (IOException | InvalidConfigurationException | IllegalArgumentException e) {
                 plugin.getLogger().log(Level.SEVERE, "Failed to load nation politics from file: " + nationFile.getName(), e);
@@ -238,6 +261,8 @@ public class NationManager {
             }
             plugin.getLogger().info("Synchronized nation politics data with current Towny nations.");
         }
+
+
     }
 
     public void saveNationPolitics(NationPolitics politics) {
@@ -265,6 +290,22 @@ public class NationManager {
         politics.getPrimeMinisterUUID().ifPresent(uuid -> nationConfig.set("primeMinisterUUID", uuid.toString()));
         if (!politics.getTitularMonarchUUID().isPresent()) nationConfig.set("titularMonarchUUID", null);
         if (!politics.getPrimeMinisterUUID().isPresent()) nationConfig.set("primeMinisterUUID", null);
+        if (politics.getParliamentarySeatsWonByPartyInternal() != null && !politics.getParliamentarySeatsWonByPartyInternal().isEmpty()) {
+            ConfigurationSection seatsWonSection = nationConfig.createSection("parliamentarySeatsWon");
+            politics.getParliamentarySeatsWonByPartyInternal().forEach((partyId, seats) -> seatsWonSection.set(partyId.toString(), seats));
+        } else {
+            nationConfig.set("parliamentarySeatsWon", null); // 确保移除旧数据
+        }
+        if (politics.getParliamentaryMembersByPartyInternal() != null && !politics.getParliamentaryMembersByPartyInternal().isEmpty()) {
+            ConfigurationSection membersSection = nationConfig.createSection("parliamentaryMembers");
+            politics.getParliamentaryMembersByPartyInternal().forEach((partyId, mpList) -> {
+                if (mpList != null && !mpList.isEmpty()) {
+                    membersSection.set(partyId.toString(), mpList.stream().map(UUID::toString).collect(Collectors.toList()));
+                }
+            });
+        } else {
+            nationConfig.set("parliamentaryMembers", null); // 确保移除旧数据
+        }
 
         try {
             nationConfig.save(nationFile);
